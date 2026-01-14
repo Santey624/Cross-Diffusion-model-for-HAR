@@ -6,6 +6,22 @@ __pycache__/
 # C extensions
 *.so
 
+# Datasets / large files
+data/
+dataset/
+datasets/
+raw_data/
+processed/
+runs/
+# Optional: typische Formate
+*.csv
+*.h5
+*.hdf5
+*.npz
+*.npy
+*.pt
+*.pth
+
 # Distribution / packaging
 .Python
 build/

@@ -13,7 +13,7 @@ from src.data.modality_registry import (
 
 
 # ============================================================
-# Helper: fix sequence length (crop or zero-pad)
+# Helper: fix sequence length (crop or ze
 # ============================================================
 
 def fix_length(x: torch.Tensor, target_length: int) -> torch.Tensor:
