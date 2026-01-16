@@ -13,16 +13,36 @@ class MultiModalVAE(nn.Module):
         # Encoders
         self.enc_phone = ConvEncoder1D(12, z_device)
         self.enc_watch = ConvEncoder1D(6, z_device)
-        self.enc_glasses = ConvEncoder1D(6, z_device)
+        self.enc_glasses = ConvEncoder1D(3, z_device)
 
         # Fusion
         self.fusion_mu = nn.Linear(3 * z_device, z_fused)
         self.fusion_logvar = nn.Linear(3 * z_device, z_fused)
 
         # Decoders
-        self.dec_phone = ConvDecoder1D(z_fused, 12, 800)
-        self.dec_watch = ConvDecoder1D(z_fused, 6, 268)
-        self.dec_glasses = ConvDecoder1D(z_fused, 6, 80)
+        self.dec_phone = ConvDecoder1D(
+        latent_dim=z_fused,
+        out_channels=12,
+        out_length=800,
+        base_channels=256,   # groß
+        seed_len=25
+        )
+
+        self.dec_watch = ConvDecoder1D(
+            latent_dim=z_fused,
+            out_channels=6,
+            out_length=268,
+            base_channels=128,   # mittel
+            seed_len=15
+        )
+
+        self.dec_glasses = ConvDecoder1D(
+            latent_dim=z_fused,
+            out_channels=3,
+            out_length=80,
+            base_channels=64,    # klein
+            seed_len=10
+        )
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
