@@ -5,28 +5,24 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class ConvEncoder1D(nn.Module):
-    def __init__(self, in_channels, latent_dim):
+# src/models/encoders.py
+
+class TemporalConvEncoder1D(nn.Module):
+    def __init__(self, in_channels, latent_dim, base_channels=64):
         super().__init__()
 
         self.net = nn.Sequential(
-            nn.Conv1d(in_channels, 64, kernel_size=5, stride=2, padding=2),
+            nn.Conv1d(in_channels, base_channels, 5, stride=2, padding=2),
             nn.ReLU(),
-            nn.Conv1d(64, 128, kernel_size=5, stride=2, padding=2),
+            nn.Conv1d(base_channels, base_channels*2, 5, stride=2, padding=2),
             nn.ReLU(),
-            nn.Conv1d(128, 256, kernel_size=5, stride=2, padding=2),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool1d(1)  # (B, 256, 1)
+            nn.Conv1d(base_channels*2, latent_dim*2, 5, stride=2, padding=2),
         )
 
-        self.fc_mu = nn.Linear(256, latent_dim)
-        self.fc_logvar = nn.Linear(256, latent_dim)
-
     def forward(self, x):
-        # x: (B, T, C) → Conv1D erwartet (B, C, T)
+        # x: (B, T, C) → (B, C, T)
         x = x.transpose(1, 2)
-        h = self.net(x).squeeze(-1)
+        h = self.net(x)              # (B, 2D, T')
+        mu, logvar = torch.chunk(h, 2, dim=1)
+        return mu, logvar            # (B, D, T')
 
-        mu = self.fc_mu(h)
-        logvar = self.fc_logvar(h)
-        return mu, logvar

@@ -1,13 +1,12 @@
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset
 from pathlib import Path
 from tqdm import tqdm
+import torch
 
+from src.models.temporal_vae import TemporalMultiModalVAE
 from src.data.cogage_vae_dataset import CogAgeVAEDataset
 from src.data.normalizer import MultiModalNormalizer
-from torch.utils.data import ConcatDataset
-from src.models.vae import MultiModalVAE
-from src.losses.vae_loss import vae_loss
-import torch
+from src.losses.temporal_vae_loss import temporal_vae_loss
 
 
 # ============================================================
@@ -15,20 +14,23 @@ import torch
 # ============================================================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-BATCH_SIZE = 32
-EPOCHS = 30
+BATCH_SIZE = 16
+EPOCHS = 40
 LR = 1e-3
-BETA = 1e-3
+
+BETA = 1e-4
+KL_WARMUP_EPOCHS = 10
 
 NORMALIZER_PATH = "data/combined_normalizer.npz"
-CHECKPOINT_DIR = Path("checkpoints")
-CHECKPOINT_DIR.mkdir(exist_ok=True)
 
 DATA_ROOTS = {
     "blho": "data/cogage/python/arrays/blho",
     "bbh": "data/cogage/python/arrays/bbh",
     "state": "data/cogage/python/arrays/state",
 }
+
+CHECKPOINT_DIR = Path("checkpoints")
+CHECKPOINT_DIR.mkdir(exist_ok=True)
 
 
 # ============================================================
@@ -37,26 +39,16 @@ DATA_ROOTS = {
 print("Loading normalizer...")
 normalizer = MultiModalNormalizer.load(NORMALIZER_PATH)
 
-# -------- TRAIN (Session #1) --------
-ds_blho_train = CogAgeVAEDataset(DATA_ROOTS["blho"], "training", normalizer)
-ds_bbh_train = CogAgeVAEDataset(DATA_ROOTS["bbh"], "training", normalizer)
-ds_state_train = CogAgeVAEDataset(DATA_ROOTS["state"], "training", normalizer)
-
 train_dataset = ConcatDataset([
-    ds_blho_train,
-    ds_bbh_train,
-    ds_state_train
+    CogAgeVAEDataset(DATA_ROOTS["blho"], "training", normalizer),
+    CogAgeVAEDataset(DATA_ROOTS["bbh"], "training", normalizer),
+    CogAgeVAEDataset(DATA_ROOTS["state"], "training", normalizer),
 ])
 
-# -------- TEST (Session #2) --------
-ds_blho_test = CogAgeVAEDataset(DATA_ROOTS["blho"], "testing", normalizer)
-ds_bbh_test = CogAgeVAEDataset(DATA_ROOTS["bbh"], "testing", normalizer)
-ds_state_test = CogAgeVAEDataset(DATA_ROOTS["state"], "testing", normalizer)
-
 test_dataset = ConcatDataset([
-    ds_blho_test,
-    ds_bbh_test,
-    ds_state_test
+    CogAgeVAEDataset(DATA_ROOTS["blho"], "testing", normalizer),
+    CogAgeVAEDataset(DATA_ROOTS["bbh"], "testing", normalizer),
+    CogAgeVAEDataset(DATA_ROOTS["state"], "testing", normalizer),
 ])
 
 print(f"Train samples: {len(train_dataset)}")
@@ -79,97 +71,77 @@ test_loader = DataLoader(
 # ============================================================
 # MODEL
 # ============================================================
-model = MultiModalVAE(
-    z_device=32,
-    z_fused=64
+model = TemporalMultiModalVAE(
+    z_phone=32,
+    z_watch=32,
+    z_glasses=16
 ).to(DEVICE)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
 
 # ============================================================
-# TRAIN / TEST LOOP
+# TRAIN / EVAL LOOP
 # ============================================================
 for epoch in range(1, EPOCHS + 1):
-
-    # --------------------
-    # TRAIN
-    # --------------------
     model.train()
-    train_loss = 0.0
-    train_recon = 0.0
-    train_kl = 0.0
+    beta_eff = BETA * (min(1.0, epoch / KL_WARMUP_EPOCHS) ** 2)
 
+    train_tot = train_rec = train_kl = 0.0
     for batch in tqdm(train_loader, desc=f"[Train] Epoch {epoch}/{EPOCHS}"):
         phone = batch["phone"].to(DEVICE)
         watch = batch["watch"].to(DEVICE)
         glasses = batch["glasses"].to(DEVICE)
 
-        output = model(phone, watch, glasses)
+        outputs = model(phone, watch, glasses)
 
-        loss, recon, kl = vae_loss(
-            batch={
-                "phone": phone,
-                "watch": watch,
-                "glasses": glasses
-            },
-            output=output,
-            beta=BETA
+        loss, parts = temporal_vae_loss(
+            outputs=outputs,
+            batch={"phone": phone, "watch": watch, "glasses": glasses},
+            beta=beta_eff
         )
 
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
 
-        train_loss += loss.item()
-        train_recon += recon.item()
-        train_kl += kl.item()
+        train_tot += loss.item()
+        train_rec += parts["recon"].item()
+        train_kl += parts["kl"].item()
 
-    train_loss /= len(train_loader)
-    train_recon /= len(train_loader)
+    train_tot /= len(train_loader)
+    train_rec /= len(train_loader)
     train_kl /= len(train_loader)
 
-    # --------------------
-    # TEST
-    # --------------------
+    # ---- EVAL ----
     model.eval()
-    test_loss = 0.0
-    test_recon = 0.0
-    test_kl = 0.0
-
+    test_tot = test_rec = test_kl = 0.0
     with torch.no_grad():
-        for batch in tqdm(test_loader, desc=f"[Test ] Epoch {epoch}/{EPOCHS}"):
+        for batch in tqdm(test_loader, desc=f"[Eval ] Epoch {epoch}/{EPOCHS}"):
             phone = batch["phone"].to(DEVICE)
             watch = batch["watch"].to(DEVICE)
             glasses = batch["glasses"].to(DEVICE)
 
-            output = model(phone, watch, glasses)
-
-            loss, recon, kl = vae_loss(
-                batch={
-                    "phone": phone,
-                    "watch": watch,
-                    "glasses": glasses
-                },
-                output=output,
-                beta=BETA
+            outputs = model(phone, watch, glasses)
+            loss, parts = temporal_vae_loss(
+                outputs=outputs,
+                batch={"phone": phone, "watch": watch, "glasses": glasses},
+                beta=beta_eff
             )
 
-            test_loss += loss.item()
-            test_recon += recon.item()
-            test_kl += kl.item()
+            test_tot += loss.item()
+            test_rec += parts["recon"].item()
+            test_kl += parts["kl"].item()
 
-    test_loss /= len(test_loader)
-    test_recon /= len(test_loader)
+    test_tot /= len(test_loader)
+    test_rec /= len(test_loader)
     test_kl /= len(test_loader)
 
-    # --------------------
-    # LOGGING
-    # --------------------
     print(
-        f"\nEpoch {epoch:03d} | "
-        f"Train: loss={train_loss:.4f}, recon={train_recon:.4f}, kl={train_kl:.4f} | "
-        f"Test:  loss={test_loss:.4f}, recon={test_recon:.4f}, kl={test_kl:.4f}\n"
+        f"\nEpoch {epoch:03d} | beta={beta_eff:.2e}\n"
+        f"Train: loss={train_tot:.4f}, recon={train_rec:.4f}, kl={train_kl:.4f}\n"
+        f"Test : loss={test_tot:.4f}, recon={test_rec:.4f}, kl={test_kl:.4f}\n"
     )
 
     # --------------------
@@ -181,7 +153,7 @@ for epoch in range(1, EPOCHS + 1):
             "model_state": model.state_dict(),
             "optimizer_state": optimizer.state_dict(),
         },
-        CHECKPOINT_DIR / f"vae_epoch_{epoch:03d}.pt"
+        CHECKPOINT_DIR / f"vae_B_epoch_{epoch:03d}.pt"
     )
 
-print("✅ VAE training finished.")
+print("✅ Temporal MultiModal VAE (B) training finished.")

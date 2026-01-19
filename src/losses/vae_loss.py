@@ -1,25 +1,36 @@
+# src/losses/vae_loss.py
+
+import torch.nn.functional as F
 import torch
 
+def vae_loss_single(x, recon, mu, logvar, beta=1e-3):
+    recon_loss = F.mse_loss(recon, x, reduction="mean")
+    kl = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
+    return recon_loss + beta * kl, recon_loss, kl
 
-def vae_loss(batch, output, beta=1e-3):
-    """
-    batch: dict with keys phone, watch, glasses
-    output: dict from MultiModalVAE forward
-    beta: KL weight
-    """
 
-    recon_phone = ((batch["phone"] - output["recon_phone"]) ** 2).mean()
-    recon_watch = ((batch["watch"] - output["recon_watch"]) ** 2).mean()
-    recon_glasses = ((batch["glasses"] - output["recon_glasses"]) ** 2).mean()
+def vae_loss_multimodal(batch, outputs, beta=1e-3):
+    losses = {}
 
-    recon_loss = recon_phone + recon_watch + recon_glasses
+    total = 0.0
+    for key in ["phone", "watch", "glasses"]:
+        loss, rec, kl = vae_loss_single(
+            batch[key],
+            outputs[key]["recon"],
+            outputs[key]["mu"],
+            outputs[key]["logvar"],
+            beta
+        )
+        losses[key] = (loss, rec, kl)
+        total += loss
+
+    return total, losses
+
+def temporal_vae_loss(x, recon, mu, logvar, beta=1e-3):
+    recon_loss = F.mse_loss(recon, x)
 
     kl = -0.5 * torch.mean(
-        1 + output["logvar"]
-        - output["mu"] ** 2
-        - torch.exp(output["logvar"])
+        1 + logvar - mu.pow(2) - logvar.exp()
     )
 
-    total_loss = recon_loss + beta * kl
-
-    return total_loss, recon_loss, kl
+    return recon_loss + beta * kl, recon_loss, kl
