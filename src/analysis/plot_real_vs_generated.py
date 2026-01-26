@@ -1,37 +1,47 @@
 import torch
 import matplotlib.pyplot as plt
 from pathlib import Path
+from torch.utils.data import DataLoader
+
+from src.data.cogage_vae_dataset import CogAgeVAEDataset
+from src.data.normalizer import MultiModalNormalizer
 
 # =========================
 # CONFIG
 # =========================
-REAL_BATCH_PATH = "data/cogage/python/arrays/blho/testing/batch_000.pt"
+DATA_ROOT = "data/cogage/python/arrays/blho"
+SPLIT = "testing"        # or "training"
 GEN_PATH = "outputs/generated_timeseries.pt"
 
 OUT_DIR = Path("outputs/plots")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-SAMPLE_IDX = 0       # welches Sample
-CHANNEL_PHONE = 0    # welchen Kanal plotten
+SAMPLE_IDX = 0
+CHANNEL_PHONE = 0
 CHANNEL_WATCH = 0
 CHANNEL_GLASSES = 0
 
+# =========================
+# LOAD REAL DATA (Dataset)
+# =========================
+normalizer = MultiModalNormalizer.load("data/combined_normalizer.npz")
+dataset = CogAgeVAEDataset(DATA_ROOT, SPLIT, normalizer)
+
+real = dataset[SAMPLE_IDX]
 
 # =========================
-# LOAD DATA
+# LOAD GENERATED
 # =========================
-real = torch.load(REAL_BATCH_PATH)
 gen = torch.load(GEN_PATH)
 
-real_phone = real["phone"][SAMPLE_IDX, :, CHANNEL_PHONE]
+real_phone = real["phone"][:, CHANNEL_PHONE]
 gen_phone = gen["phone"][SAMPLE_IDX, :, CHANNEL_PHONE]
 
-real_watch = real["watch"][SAMPLE_IDX, :, CHANNEL_WATCH]
+real_watch = real["watch"][:, CHANNEL_WATCH]
 gen_watch = gen["watch"][SAMPLE_IDX, :, CHANNEL_WATCH]
 
-real_glasses = real["glasses"][SAMPLE_IDX, :, CHANNEL_GLASSES]
+real_glasses = real["glasses"][:, CHANNEL_GLASSES]
 gen_glasses = gen["glasses"][SAMPLE_IDX, :, CHANNEL_GLASSES]
-
 
 # =========================
 # PLOT
