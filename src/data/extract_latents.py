@@ -103,6 +103,8 @@ with torch.no_grad():
 
         # IMPORTANT: use encoder mean (mu), NOT sampled z
         outputs = vae(phone, watch, glasses)
+        print("OUTPUT KEYS:", outputs.keys())
+        raise SystemExit
         mu = outputs["mu"]              # shape: [B, z_dim]
 
         latents.append(mu.cpu())
