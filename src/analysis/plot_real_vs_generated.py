@@ -11,7 +11,7 @@ from src.data.normalizer import MultiModalNormalizer
 # =========================
 DATA_ROOT = "data/cogage/python/arrays/blho"
 SPLIT = "testing"        # or "training"
-GEN_PATH = "outputs/generated_timeseries.pt"
+GEN_PATH = "outputs/generated_timeseries/generated_timeseries.pt"
 
 OUT_DIR = Path("outputs/plots")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
