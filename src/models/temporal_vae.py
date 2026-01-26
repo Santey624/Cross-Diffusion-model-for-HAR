@@ -37,25 +37,6 @@ class TemporalConvEncoder1D(nn.Module):
         mu, logvar = torch.chunk(h, 2, dim=1)
         return mu, logvar
     
-    def encode_mu(self, phone, watch, glasses):
-        """
-        Returns concatenated encoder means (mu) for diffusion.
-        Shape: [B, z_phone + z_watch + z_glasses]
-        """
-        out = self.forward(phone, watch, glasses)
-
-        mu_phone = out["phone"]["mu"]        # (B, Dp, T')
-        mu_watch = out["watch"]["mu"]        # (B, Dw, T')
-        mu_glasses = out["glasses"]["mu"]    # (B, Dg, T')
-
-        # temporal aggregation (VERY IMPORTANT)
-        mu_phone = mu_phone.mean(dim=2)
-        mu_watch = mu_watch.mean(dim=2)
-        mu_glasses = mu_glasses.mean(dim=2)
-
-        mu = torch.cat([mu_phone, mu_watch, mu_glasses], dim=1)
-        return mu
-    
 
 
 # ============================================================
@@ -142,3 +123,22 @@ class TemporalMultiModalVAE(nn.Module):
             "watch": self.watch(watch),
             "glasses": self.glasses(glasses),
         }
+    
+    def encode_mu(self, phone, watch, glasses):
+        """
+        Returns concatenated encoder means (mu) for diffusion.
+        Shape: [B, z_phone + z_watch + z_glasses]
+        """
+        out = self.forward(phone, watch, glasses)
+
+        mu_phone = out["phone"]["mu"]        # (B, Dp, T')
+        mu_watch = out["watch"]["mu"]        # (B, Dw, T')
+        mu_glasses = out["glasses"]["mu"]    # (B, Dg, T')
+
+        # temporal aggregation (VERY IMPORTANT)
+        mu_phone = mu_phone.mean(dim=2)
+        mu_watch = mu_watch.mean(dim=2)
+        mu_glasses = mu_glasses.mean(dim=2)
+
+        mu = torch.cat([mu_phone, mu_watch, mu_glasses], dim=1)
+        return mu
