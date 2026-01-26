@@ -102,7 +102,7 @@ with torch.no_grad():
         glasses = batch["glasses"].to(DEVICE, non_blocking=True)
 
         # IMPORTANT: use encoder mean (mu), NOT sampled z
-        outputs = vae.encode(phone, watch, glasses)
+        outputs = vae(phone, watch, glasses)
         mu = outputs["mu"]              # shape: [B, z_dim]
 
         latents.append(mu.cpu())
