@@ -21,8 +21,8 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 VAE_CHECKPOINT = "checkpoints/vae_gpu_epoch_050.pt"
 
 # Joint diffusion checkpoint
-DIFFUSION_DIR = Path("checkpoints/joint_diffusion")
-DIFFUSION_EPOCH = 300
+DIFFUSION_DIR = Path("checkpoints/joint_diffusion_large")
+DIFFUSION_EPOCH = 500
 
 # Latents
 LATENTS_DIR = Path("data/latents")
