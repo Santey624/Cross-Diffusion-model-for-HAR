@@ -60,7 +60,7 @@ def main():
     dataset = CogAgeVAEDataset(
         root_dir=DATA_ROOT,
         split=SPLIT,
-        normalizer=normalizer,
+        transform=normalizer,
     )
 
     print(f"Dataset size: {len(dataset)}")
@@ -78,9 +78,9 @@ def main():
         for i in range(NUM_EVAL_SAMPLES):
             sample = dataset[i]
 
-            phone_real = sample["phone_sensor"].unsqueeze(0).to(DEVICE)    # (1, 600, 12)
-            watch_real = sample["watch_sensor"].unsqueeze(0).to(DEVICE)    # (1, 204, 12)
-            glasses_real = sample["glasses_sensor"].unsqueeze(0).to(DEVICE)  # (1, 100, 1)
+            phone_real = sample["phone"].unsqueeze(0).to(DEVICE)    # (1, 800, 12)
+            watch_real = sample["watch"].unsqueeze(0).to(DEVICE)    # (1, 268, 6)
+            glasses_real = sample["glasses"].unsqueeze(0).to(DEVICE)  # (1, 80, 3)
 
             # Encode and decode
             phone_mu, phone_logvar = vae.phone.encoder(phone_real)
