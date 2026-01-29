@@ -51,8 +51,11 @@ def main():
 
     # Load dataset
     print(f"Loading dataset from: {DATA_ROOT}")
-    normalizer = MultiModalNormalizer()
-    normalizer.fit_from_dataset(DATA_ROOT, split=SPLIT)
+
+    # Load normalization stats
+    normalizer_path = "data/blho_normalizer.npz"#
+    print(f"Loading normalizer from: {normalizer_path}")#
+    normalizer = MultiModalNormalizer.load(normalizer_path)
 
     dataset = CogAgeVAEDataset(
         root_dir=DATA_ROOT,
