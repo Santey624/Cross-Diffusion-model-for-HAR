@@ -35,7 +35,7 @@ DIFFUSION_EPOCH = 200
 LATENTS_DIR = Path("data/latents")
 
 # Which modality to impute
-MISSING_MODALITY = "glasses"  # "phone", "watch", or "glasses"
+MISSING_MODALITY = "phone"  # "phone", "watch", or "glasses"
 
 # How many samples to evaluate
 NUM_EVAL_SAMPLES = 10
