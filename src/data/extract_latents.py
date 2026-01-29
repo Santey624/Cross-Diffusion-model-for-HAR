@@ -134,17 +134,17 @@ torch.save(latents_glasses, OUTPUT_FILE_GLASSES)
 
 print("========================================")
 print("Temporal latent extraction finished.")
-print(f"\nSaved temporal latents to:")
+print(f"\nSaved temporal latents to:")  # noqa: F541
 print(f"  Phone:   {OUTPUT_FILE_PHONE}")
 print(f"  Watch:   {OUTPUT_FILE_WATCH}")
 print(f"  Glasses: {OUTPUT_FILE_GLASSES}")
 
-print(f"\nShapes:")
+print(f"\nShapes:")# noqa: F541
 print(f"  Phone latents:   {latents_phone.shape}   (N, 32, T_phone')")
 print(f"  Watch latents:   {latents_watch.shape}   (N, 32, T_watch')")
 print(f"  Glasses latents: {latents_glasses.shape} (N, 16, T_glasses')")
 
-print(f"\nStatistics:")
+print(f"\nStatistics:")# noqa: F541
 print(f"  Phone   - mean |mu|: {latents_phone.abs().mean():.4f}, std: {latents_phone.std():.4f}")
 print(f"  Watch   - mean |mu|: {latents_watch.abs().mean():.4f}, std: {latents_watch.std():.4f}")
 print(f"  Glasses - mean |mu|: {latents_glasses.abs().mean():.4f}, std: {latents_glasses.std():.4f}")

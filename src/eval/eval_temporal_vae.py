@@ -2,7 +2,6 @@ import torch
 from torch.utils.data import DataLoader, ConcatDataset
 from pathlib import Path
 from tqdm import tqdm
-import os
 import matplotlib.pyplot as plt
 
 from src.models.temporal_vae import TemporalMultiModalVAE

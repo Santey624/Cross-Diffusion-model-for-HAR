@@ -156,7 +156,7 @@ class ConditionalTemporalDenoiser(nn.Module):
         Returns:
             predicted noise (B, target_dim, target_len)
         """
-        B = z_t.shape[0]
+        B = z_t.shape[0]  # noqa: F841
 
         # Time embedding
         t_emb = self.t_embed(t)  # (B, t_dim)

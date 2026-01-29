@@ -1,7 +1,7 @@
 import torch
 import matplotlib.pyplot as plt
 from pathlib import Path
-from torch.utils.data import DataLoader
+
 
 from src.data.cogage_vae_dataset import CogAgeVAEDataset
 from src.data.normalizer import MultiModalNormalizer
