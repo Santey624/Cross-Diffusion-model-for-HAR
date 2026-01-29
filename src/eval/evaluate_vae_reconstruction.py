@@ -53,7 +53,7 @@ def main():
     print(f"Loading dataset from: {DATA_ROOT}")
 
     # Load normalization stats
-    normalizer_path = "data/blho_normalizer.npz"#
+    normalizer_path = "data/combined_normalizer.npz"#
     print(f"Loading normalizer from: {normalizer_path}")#
     normalizer = MultiModalNormalizer.load(normalizer_path)
 
