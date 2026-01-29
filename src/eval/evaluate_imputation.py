@@ -165,10 +165,11 @@ def main():
     # Normalize conditions
     conditions = []
     for i, cond in enumerate(conditions_raw):
-        cond_mean = stats["condition_stats"][i]["mean"]
-        cond_std = stats["condition_stats"][i]["std"]
+        cond_mean = stats["condition_stats"][i]["mean"].to(DEVICE)
+        cond_std = stats["condition_stats"][i]["std"].to(DEVICE)
+        cond = cond.to(DEVICE)
         cond_norm = (cond - cond_mean) / cond_std
-        conditions.append(cond_norm.to(DEVICE))
+        conditions.append(cond_norm)
 
     # ========================================
     # 4. IMPUTE MISSING MODALITY
@@ -189,8 +190,8 @@ def main():
     )
 
     # Denormalize
-    target_mean = stats["target_mean"]
-    target_std = stats["target_std"]
+    target_mean = stats["target_mean"].to(DEVICE)
+    target_std = stats["target_std"].to(DEVICE)
     imputed_latents = imputed_norm * target_std + target_mean
 
     # ========================================
