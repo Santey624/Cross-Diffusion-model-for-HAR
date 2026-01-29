@@ -202,17 +202,17 @@ def main():
     with torch.no_grad():
         if MISSING_MODALITY == "phone":
             # Decode imputed phone
-            imputed_signals = vae.decoder_phone(imputed_latents.to(DEVICE))
+            imputed_signals = vae.phone.decoder(imputed_latents.to(DEVICE))
             # Decode ground truth
-            ground_truth_signals = vae.decoder_phone(ground_truth_latents.to(DEVICE))
+            ground_truth_signals = vae.phone.decoder(ground_truth_latents.to(DEVICE))
 
         elif MISSING_MODALITY == "watch":
-            imputed_signals = vae.decoder_watch(imputed_latents.to(DEVICE))
-            ground_truth_signals = vae.decoder_watch(ground_truth_latents.to(DEVICE))
+            imputed_signals = vae.watch.decoder(imputed_latents.to(DEVICE))
+            ground_truth_signals = vae.watch.decoder(ground_truth_latents.to(DEVICE))
 
         elif MISSING_MODALITY == "glasses":
-            imputed_signals = vae.decoder_glasses(imputed_latents.to(DEVICE))
-            ground_truth_signals = vae.decoder_glasses(ground_truth_latents.to(DEVICE))
+            imputed_signals = vae.glasses.decoder(imputed_latents.to(DEVICE))
+            ground_truth_signals = vae.glasses.decoder(ground_truth_latents.to(DEVICE))
 
     imputed_signals = imputed_signals.cpu()
     ground_truth_signals = ground_truth_signals.cpu()
