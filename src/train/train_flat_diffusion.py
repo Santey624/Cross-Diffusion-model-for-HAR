@@ -1,6 +1,6 @@
 # ============================================================
-# Train Joint Flat Conditional Diffusion
-# Single model, flattened latent space, cosine schedule
+# Train Joint Flat Conditional Diffusion v2
+# Single model, modality-specific projections, cosine schedule
 # ============================================================
 
 from pathlib import Path
@@ -10,8 +10,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.models.flat_diffusion import (
-    JointFlatDenoiser, make_schedule, pad_to_max, unpad_from_max,
-    build_condition, MODALITY_IDS, FLAT_DIMS, MAX_FLAT_DIM
+    JointFlatDenoiser, make_schedule, FLAT_DIMS
 )
 
 # ============================================================
@@ -39,7 +38,7 @@ LR = 2e-4
 WEIGHT_DECAY = 1e-4
 GRAD_CLIP = 1.0
 
-# Classifier-free guidance: probability of dropping ALL conditions
+# CFG: probability of dropping ALL conditions
 CFG_DROP_PROB = 0.1
 
 # Min-SNR loss weighting
@@ -51,11 +50,10 @@ MIN_SNR_GAMMA = 5.0
 # ============================================================
 def main():
     print(f"\n{'='*60}")
-    print("Training Joint Flat Conditional Diffusion")
+    print("Training Joint Flat Conditional Diffusion v2")
     print(f"Schedule: {SCHEDULE}, T: {T}")
     print(f"Hidden: {HIDDEN_DIM}, Layers: {NUM_LAYERS}")
     print(f"CFG drop prob: {CFG_DROP_PROB}")
-    print(f"Min-SNR gamma: {MIN_SNR_GAMMA}")
     print(f"Device: {DEVICE}")
     print(f"{'='*60}\n")
 
@@ -76,7 +74,7 @@ def main():
     watch_flat = watch_latents.reshape(N, -1)
     glasses_flat = glasses_latents.reshape(N, -1)
 
-    # Normalize each modality
+    # Normalize
     stats = {}
     for name, flat in [("phone", phone_flat), ("watch", watch_flat), ("glasses", glasses_flat)]:
         mean = flat.mean(0)
@@ -87,8 +85,6 @@ def main():
     phone_norm = (phone_flat - stats["phone"]["mean"]) / stats["phone"]["std"]
     watch_norm = (watch_flat - stats["watch"]["mean"]) / stats["watch"]["std"]
     glasses_norm = (glasses_flat - stats["glasses"]["mean"]) / stats["glasses"]["std"]
-
-    all_norm = {"phone": phone_norm, "watch": watch_norm, "glasses": glasses_norm}
 
     # Build schedule
     sched = make_schedule(T, SCHEDULE)
@@ -108,11 +104,11 @@ def main():
         },
     }, CHECKPOINT_DIR / "config.pt")
 
-    # Create dataset (all modalities stacked)
+    # Dataset
     dataset = TensorDataset(phone_norm, watch_norm, glasses_norm)
     loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
 
-    # Create model
+    # Model
     model = JointFlatDenoiser(
         hidden_dim=HIDDEN_DIM,
         num_layers=NUM_LAYERS,
@@ -134,13 +130,13 @@ def main():
     best_loss = float('inf')
 
     # ============================================================
-    # TRAINING LOOP
+    # TRAINING
     # ============================================================
     for epoch in range(EPOCHS):
         model.train()
         epoch_loss = 0.0
-        per_modality_loss = {k: 0.0 for k in modality_names}
-        per_modality_count = {k: 0 for k in modality_names}
+        per_mod_loss = {k: 0.0 for k in modality_names}
+        per_mod_count = {k: 0 for k in modality_names}
         n_batches = 0
 
         for phone_b, watch_b, glasses_b in loader:
@@ -151,49 +147,29 @@ def main():
 
             batch_data = {"phone": phone_b, "watch": watch_b, "glasses": glasses_b}
 
-            # Random target modality for this batch
+            # Random target
             target_name = random.choice(modality_names)
             target_data = batch_data[target_name]
 
-            # Build condition: concat all modalities, zero out target
-            cond_parts = []
+            # Build conditions (pass other modalities)
+            cond_kwargs = {}
+            drop_all = random.random() < CFG_DROP_PROB
             for name in modality_names:
-                if name == target_name:
-                    cond_parts.append(torch.zeros(B, FLAT_DIMS[name], device=DEVICE))
-                else:
-                    cond_parts.append(batch_data[name])
-            cond = torch.cat(cond_parts, dim=1)  # (B, TOTAL_COND_DIM)
+                if name != target_name and not drop_all:
+                    cond_kwargs[f"{name}_cond"] = batch_data[name]
 
-            # CFG: randomly drop ALL conditions
-            if CFG_DROP_PROB > 0:
-                drop_mask = (torch.rand(B, device=DEVICE) < CFG_DROP_PROB).unsqueeze(1)
-                cond = cond * (~drop_mask).float()
-
-            # Modality ID
-            mod_id = torch.full((B,), MODALITY_IDS[target_name],
-                                device=DEVICE, dtype=torch.long)
-
-            # Pad target to max dim
-            target_padded = pad_to_max(target_data, target_name)
-
-            # Sample timestep
+            # Diffusion forward
             t = torch.randint(0, T, (B,), device=DEVICE)
-
-            # Forward diffusion (on padded target)
-            noise = torch.randn_like(target_padded)
-            z_t = sqrt_ab[t].unsqueeze(1) * target_padded + sqrt_1_ab[t].unsqueeze(1) * noise
+            noise = torch.randn_like(target_data)
+            z_t = sqrt_ab[t].unsqueeze(1) * target_data + sqrt_1_ab[t].unsqueeze(1) * noise
 
             # Predict noise
-            noise_pred = model(z_t, t, cond, mod_id)
+            noise_pred = model(z_t, t, target_name, **cond_kwargs)
 
-            # Min-SNR weighted loss (only on actual target dims, not padding)
-            actual_dim = FLAT_DIMS[target_name]
-            noise_actual = noise[:, :actual_dim]
-            pred_actual = noise_pred[:, :actual_dim]
-
+            # Min-SNR weighted loss
             snr_t = snr[t]
             weight = torch.clamp(snr_t, max=MIN_SNR_GAMMA) / snr_t
-            loss = (weight.unsqueeze(1) * (pred_actual - noise_actual) ** 2).mean()
+            loss = (weight.unsqueeze(1) * (noise_pred - noise) ** 2).mean()
 
             optimizer.zero_grad()
             loss.backward()
@@ -201,14 +177,14 @@ def main():
             optimizer.step()
 
             epoch_loss += loss.item()
-            per_modality_loss[target_name] += loss.item()
-            per_modality_count[target_name] += 1
+            per_mod_loss[target_name] += loss.item()
+            per_mod_count[target_name] += 1
             n_batches += 1
 
         scheduler.step()
 
         avg_loss = epoch_loss / n_batches
-        avg_per_mod = {k: (per_modality_loss[k] / max(per_modality_count[k], 1))
+        avg_per_mod = {k: (per_mod_loss[k] / max(per_mod_count[k], 1))
                        for k in modality_names}
 
         if (epoch + 1) % 10 == 0 or epoch == 0:
@@ -220,7 +196,6 @@ def main():
                   f"G: {avg_per_mod['glasses']:.4f} | "
                   f"LR: {lr:.2e}")
 
-        # Save best
         if avg_loss < best_loss:
             best_loss = avg_loss
             torch.save({
@@ -229,7 +204,6 @@ def main():
                 "loss": avg_loss,
             }, CHECKPOINT_DIR / "best_model.pt")
 
-        # Periodic checkpoints
         if (epoch + 1) % 100 == 0:
             torch.save({
                 "model_state": model.state_dict(),
@@ -239,7 +213,7 @@ def main():
 
     print(f"\n{'='*60}")
     print(f"TRAINING COMPLETE - Best loss: {best_loss:.6f}")
-    print(f"Checkpoints saved to: {CHECKPOINT_DIR}")
+    print(f"Checkpoints: {CHECKPOINT_DIR}")
     print(f"{'='*60}\n")
 
 

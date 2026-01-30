@@ -1,6 +1,6 @@
 # ============================================================
-# Flat Joint Conditional Diffusion Model
-# Single model for all modalities, works in flattened latent space
+# Flat Joint Conditional Diffusion Model v2
+# Single model, modality-specific projections (no padding!)
 # ============================================================
 
 import math
@@ -13,7 +13,6 @@ import torch.nn.functional as F
 # Cosine Schedule (Nichol & Dhariwal 2021)
 # ============================================================
 def cosine_beta_schedule(T, s=0.008):
-    """Cosine schedule as proposed in 'Improved DDPM'."""
     steps = torch.arange(T + 1, dtype=torch.float64)
     f_t = torch.cos((steps / T + s) / (1 + s) * math.pi / 2) ** 2
     alpha_bar = f_t / f_t[0]
@@ -22,31 +21,22 @@ def cosine_beta_schedule(T, s=0.008):
     return betas.float()
 
 
-def linear_beta_schedule(T, beta_start=1e-4, beta_end=0.02):
-    return torch.linspace(beta_start, beta_end, T)
-
-
 def make_schedule(T, schedule_type="cosine"):
     if schedule_type == "cosine":
         betas = cosine_beta_schedule(T)
     else:
-        betas = linear_beta_schedule(T)
+        betas = torch.linspace(1e-4, 0.02, T)
 
     alphas = 1.0 - betas
     alpha_bar = torch.cumprod(alphas, dim=0)
-    sqrt_alpha_bar = torch.sqrt(alpha_bar)
-    sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar)
-
-    # For SNR weighting
-    snr = alpha_bar / (1.0 - alpha_bar)
 
     return {
         "betas": betas,
         "alphas": alphas,
         "alpha_bar": alpha_bar,
-        "sqrt_alpha_bar": sqrt_alpha_bar,
-        "sqrt_one_minus_alpha_bar": sqrt_one_minus_alpha_bar,
-        "snr": snr,
+        "sqrt_alpha_bar": torch.sqrt(alpha_bar),
+        "sqrt_one_minus_alpha_bar": torch.sqrt(1.0 - alpha_bar),
+        "snr": alpha_bar / (1.0 - alpha_bar),
     }
 
 
@@ -71,8 +61,6 @@ class SinusoidalTimeEmbedding(nn.Module):
 # ResBlock with FiLM
 # ============================================================
 class ResBlock(nn.Module):
-    """Residual block with FiLM time conditioning."""
-
     def __init__(self, dim, time_dim, dropout=0.1):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim)
@@ -81,18 +69,16 @@ class ResBlock(nn.Module):
         self.linear2 = nn.Linear(dim, dim)
         self.dropout = nn.Dropout(dropout)
 
-        # FiLM: time → scale + shift
         self.time_proj = nn.Sequential(
             nn.SiLU(),
             nn.Linear(time_dim, dim * 2),
         )
 
     def forward(self, x, t_emb):
-        scale_shift = self.time_proj(t_emb)
-        scale, shift = scale_shift.chunk(2, dim=-1)
+        scale, shift = self.time_proj(t_emb).chunk(2, dim=-1)
 
         h = self.norm1(x)
-        h = h * (1 + scale) + shift  # FiLM
+        h = h * (1 + scale) + shift
         h = F.silu(h)
         h = self.linear1(h)
         h = self.dropout(h)
@@ -105,7 +91,7 @@ class ResBlock(nn.Module):
 
 
 # ============================================================
-# Joint Flat Conditional Denoiser
+# Constants
 # ============================================================
 MODALITY_IDS = {"phone": 0, "watch": 1, "glasses": 2}
 
@@ -115,31 +101,19 @@ FLAT_DIMS = {
     "glasses": 16 * 10,   # 160
 }
 
-# Max flat dim (for padding targets to same size)
-MAX_FLAT_DIM = max(FLAT_DIMS.values())  # 3200
 
-# Total condition dim (all modalities concatenated)
-TOTAL_COND_DIM = sum(FLAT_DIMS.values())  # 4448
-
-
+# ============================================================
+# Joint Flat Denoiser v2 - modality-specific projections
+# ============================================================
 class JointFlatDenoiser(nn.Module):
     """
-    Single denoiser for all modalities in flattened latent space.
-
-    Input:
-        z_t:             (B, max_flat_dim) - zero-padded noisy target
-        t:               (B,)             - diffusion timestep
-        cond:            (B, total_cond_dim) - all modalities concatenated
-                         (zeros for missing/target modality)
-        modality_id:     (B,)             - which modality is target (0/1/2)
-
-    Output:
-        noise prediction (B, max_flat_dim)
+    Single denoiser for all modalities.
+    Each modality has its own input/output projection to/from hidden_dim.
+    No padding needed!
     """
 
     def __init__(self, hidden_dim=1024, num_layers=8, time_dim=256, dropout=0.1):
         super().__init__()
-
         self.hidden_dim = hidden_dim
 
         # Time embedding
@@ -150,122 +124,124 @@ class JointFlatDenoiser(nn.Module):
             nn.Linear(time_dim, time_dim),
         )
 
-        # Modality embedding (3 modalities)
+        # Modality embedding
         self.modality_emb = nn.Embedding(3, hidden_dim)
 
-        # Condition encoder
-        self.cond_encoder = nn.Sequential(
-            nn.Linear(TOTAL_COND_DIM, hidden_dim),
-            nn.SiLU(),
-            nn.LayerNorm(hidden_dim),
+        # Per-modality INPUT projections (noisy target → hidden)
+        self.input_projs = nn.ModuleDict({
+            name: nn.Linear(dim, hidden_dim) for name, dim in FLAT_DIMS.items()
+        })
+
+        # Per-modality OUTPUT projections (hidden → noise prediction)
+        self.output_projs = nn.ModuleDict({
+            name: nn.Linear(hidden_dim, dim) for name, dim in FLAT_DIMS.items()
+        })
+
+        # Condition encoders: one per modality
+        self.cond_encoders = nn.ModuleDict({
+            name: nn.Sequential(
+                nn.Linear(dim, hidden_dim),
+                nn.SiLU(),
+                nn.LayerNorm(hidden_dim),
+            ) for name, dim in FLAT_DIMS.items()
+        })
+
+        # Condition fusion (combine multiple condition embeddings)
+        self.cond_fusion = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.SiLU(),
             nn.LayerNorm(hidden_dim),
         )
 
-        # Input projection (from max_flat_dim)
-        self.input_proj = nn.Linear(MAX_FLAT_DIM, hidden_dim)
+        # Shared backbone
+        self.blocks = nn.ModuleList([
+            ResBlock(hidden_dim, time_dim, dropout) for _ in range(num_layers)
+        ])
 
-        # Main backbone: ResBlocks
-        self.blocks = nn.ModuleList()
-        for _ in range(num_layers):
-            self.blocks.append(ResBlock(hidden_dim, time_dim, dropout))
-
-        # Output
         self.output_norm = nn.LayerNorm(hidden_dim)
-        self.output_proj = nn.Linear(hidden_dim, MAX_FLAT_DIM)
 
-        # Init output to zero
-        nn.init.zeros_(self.output_proj.weight)
-        nn.init.zeros_(self.output_proj.bias)
+        # Init output projections to zero
+        for proj in self.output_projs.values():
+            nn.init.zeros_(proj.weight)
+            nn.init.zeros_(proj.bias)
 
-    def forward(self, z_t, t, cond, modality_id):
+    def forward(self, z_t, t, target_modality, phone_cond=None,
+                watch_cond=None, glasses_cond=None):
         """
-        z_t:         (B, max_flat_dim) - zero-padded noisy target
-        t:           (B,)
-        cond:        (B, total_cond_dim)
-        modality_id: (B,) LongTensor - 0=phone, 1=watch, 2=glasses
+        z_t:              (B, flat_dim_target) - noisy target (actual size, no padding!)
+        t:                (B,)
+        target_modality:  str - "phone", "watch", or "glasses"
+        phone_cond:       (B, 3200) or None
+        watch_cond:       (B, 1088) or None
+        glasses_cond:     (B, 160) or None
         """
-        t_emb = self.time_mlp(t)                    # (B, time_dim)
-        c_emb = self.cond_encoder(cond)              # (B, hidden_dim)
-        m_emb = self.modality_emb(modality_id)       # (B, hidden_dim)
+        B = z_t.shape[0]
+        device = z_t.device
 
-        h = self.input_proj(z_t)       # (B, hidden_dim)
-        h = h + c_emb + m_emb         # Combine all conditions
+        # Time embedding
+        t_emb = self.time_mlp(t)  # (B, time_dim)
 
+        # Modality embedding
+        mod_id = torch.full((B,), MODALITY_IDS[target_modality],
+                            device=device, dtype=torch.long)
+        m_emb = self.modality_emb(mod_id)  # (B, hidden_dim)
+
+        # Input projection (modality-specific)
+        h = self.input_projs[target_modality](z_t)  # (B, hidden_dim)
+
+        # Encode conditions
+        cond_embs = []
+        for name, cond in [("phone", phone_cond), ("watch", watch_cond),
+                           ("glasses", glasses_cond)]:
+            if cond is not None and name != target_modality:
+                cond_embs.append(self.cond_encoders[name](cond))
+
+        # Fuse conditions
+        if len(cond_embs) > 0:
+            # Average condition embeddings then fuse
+            cond_avg = torch.stack(cond_embs, dim=0).mean(dim=0)
+            c_emb = self.cond_fusion(cond_avg)
+        else:
+            c_emb = torch.zeros(B, self.hidden_dim, device=device)
+
+        # Combine
+        h = h + c_emb + m_emb
+
+        # Backbone
         for block in self.blocks:
             h = block(h, t_emb)
 
         h = self.output_norm(h)
-        return self.output_proj(h)     # (B, max_flat_dim)
 
-
-# ============================================================
-# Helper: pad/unpad target to max_flat_dim
-# ============================================================
-def pad_to_max(x, target_modality):
-    """Pad flat target to MAX_FLAT_DIM with zeros."""
-    dim = FLAT_DIMS[target_modality]
-    if dim == MAX_FLAT_DIM:
-        return x
-    return F.pad(x, (0, MAX_FLAT_DIM - dim))
-
-
-def unpad_from_max(x, target_modality):
-    """Extract actual target dims from padded output."""
-    dim = FLAT_DIMS[target_modality]
-    return x[:, :dim]
-
-
-# ============================================================
-# Build condition vector
-# ============================================================
-def build_condition(phone_flat=None, watch_flat=None, glasses_flat=None,
-                    target_modality="phone", device="cuda"):
-    """
-    Build concatenated condition vector.
-    Target modality is zeroed out, available modalities are included.
-
-    Returns: (B, TOTAL_COND_DIM)
-    """
-    B = None
-    for x in [phone_flat, watch_flat, glasses_flat]:
-        if x is not None:
-            B = x.shape[0]
-            break
-
-    parts = []
-    for name, dim in [("phone", FLAT_DIMS["phone"]),
-                      ("watch", FLAT_DIMS["watch"]),
-                      ("glasses", FLAT_DIMS["glasses"])]:
-        data = {"phone": phone_flat, "watch": watch_flat, "glasses": glasses_flat}[name]
-
-        if name == target_modality or data is None:
-            parts.append(torch.zeros(B, dim, device=device))
-        else:
-            parts.append(data.to(device))
-
-    return torch.cat(parts, dim=1)
+        # Output projection (modality-specific)
+        return self.output_projs[target_modality](h)
 
 
 # ============================================================
 # DDIM Sampler
 # ============================================================
 @torch.no_grad()
-def ddim_sample(model, cond, modality_id, target_modality, sched, T,
+def ddim_sample(model, target_modality, sched, T,
+                phone_cond=None, watch_cond=None, glasses_cond=None,
                 ddim_steps=200, eta=0.0, clip_range=5.0, device="cuda"):
-    """
-    DDIM sampling with quadratic timestep spacing.
-    """
-    B = cond.shape[0]
+    """DDIM sampling with quadratic timestep spacing."""
+
+    # Determine batch size from conditions
+    B = None
+    for c in [phone_cond, watch_cond, glasses_cond]:
+        if c is not None:
+            B = c.shape[0]
+            break
+
+    target_dim = FLAT_DIMS[target_modality]
 
     # Quadratic timestep spacing
     tau = torch.linspace(0, 1, ddim_steps + 1, device=device)
     tau = (tau ** 2 * (T - 1)).long()
     tau = tau.flip(0)
 
-    # Start from pure noise (padded to max dim)
-    z = torch.randn(B, MAX_FLAT_DIM, device=device)
+    # Start from noise (actual target dim, no padding!)
+    z = torch.randn(B, target_dim, device=device)
 
     alpha_bar = sched["alpha_bar"].to(device)
 
@@ -275,7 +251,10 @@ def ddim_sample(model, cond, modality_id, target_modality, sched, T,
 
         t_batch = torch.full((B,), t_now, device=device, dtype=torch.long)
 
-        eps_pred = model(z, t_batch, cond, modality_id)
+        eps_pred = model(z, t_batch, target_modality,
+                         phone_cond=phone_cond,
+                         watch_cond=watch_cond,
+                         glasses_cond=glasses_cond)
 
         ab_now = alpha_bar[t_now]
         pred_x0 = (z - torch.sqrt(1 - ab_now) * eps_pred) / torch.sqrt(ab_now)
@@ -295,5 +274,4 @@ def ddim_sample(model, cond, modality_id, target_modality, sched, T,
 
         z = torch.sqrt(ab_next) * pred_x0 + dir_zt + noise
 
-    # Unpad to actual target dim
-    return unpad_from_max(z, target_modality)
+    return z
