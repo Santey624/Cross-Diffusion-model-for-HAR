@@ -29,7 +29,7 @@ NUM_EVAL_SAMPLES = 100
 DDIM_STEPS = 200
 
 # Classifier-free guidance scale (1.0 = no guidance)
-CFG_SCALE = 2.0
+CFG_SCALE = 1.0  # No guidance - try without first
 
 OUTPUT_DIR = Path("outputs/flat_diffusion_eval")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
