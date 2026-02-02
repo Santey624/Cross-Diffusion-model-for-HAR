@@ -1,6 +1,6 @@
 # ============================================================
-# Sensor-Level Joint Temporal Diffusion Model
-# Dynamic modality specs, Conv1D + CrossAttention
+# Sensor-Level Joint Temporal Diffusion Model v2
+# Concatenation-based conditioning (interpolate + channel concat)
 # ============================================================
 
 import math
@@ -31,60 +31,9 @@ class SinusoidalTimeEmbedding(nn.Module):
 
 
 # ============================================================
-# Temporal Positional Encoding
+# Residual Conv Block with FiLM conditioning
 # ============================================================
-class TemporalPositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=500):
-        super().__init__()
-        position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
-        pe = torch.zeros(1, max_len, d_model)
-        pe[0, :, 0::2] = torch.sin(position * div_term)
-        pe[0, :, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        return x + self.pe[:, :x.size(1), :]
-
-
-# ============================================================
-# Cross-Modal Attention Block
-# ============================================================
-class CrossModalAttention(nn.Module):
-    def __init__(self, d_model, num_heads=4, dropout=0.1):
-        super().__init__()
-        assert d_model % num_heads == 0
-        self.d_model = d_model
-        self.num_heads = num_heads
-        self.head_dim = d_model // num_heads
-
-        self.q_proj = nn.Linear(d_model, d_model)
-        self.k_proj = nn.Linear(d_model, d_model)
-        self.v_proj = nn.Linear(d_model, d_model)
-        self.out_proj = nn.Linear(d_model, d_model)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, query, key, value):
-        B, T_q, D = query.shape
-        T_kv = key.shape[1]
-
-        Q = self.q_proj(query).view(B, T_q, self.num_heads, self.head_dim).transpose(1, 2)
-        K = self.k_proj(key).view(B, T_kv, self.num_heads, self.head_dim).transpose(1, 2)
-        V = self.v_proj(value).view(B, T_kv, self.num_heads, self.head_dim).transpose(1, 2)
-
-        scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.head_dim)
-        attn = F.softmax(scores, dim=-1)
-        attn = self.dropout(attn)
-
-        out = torch.matmul(attn, V)
-        out = out.transpose(1, 2).contiguous().view(B, T_q, D)
-        return self.out_proj(out)
-
-
-# ============================================================
-# Temporal Conv Block with FiLM
-# ============================================================
-class TemporalConvBlock(nn.Module):
+class ResConvBlock(nn.Module):
     def __init__(self, channels, t_dim, kernel_size=3, dropout=0.1):
         super().__init__()
         self.conv1 = nn.Conv1d(channels, channels, kernel_size, padding=kernel_size // 2)
@@ -109,12 +58,35 @@ class TemporalConvBlock(nn.Module):
 
 
 # ============================================================
-# Sensor Joint Diffusion Model
+# Self-Attention Block
+# ============================================================
+class SelfAttentionBlock(nn.Module):
+    def __init__(self, d_model, num_heads=4, dropout=0.1):
+        super().__init__()
+        self.attn = nn.MultiheadAttention(d_model, num_heads, dropout=dropout, batch_first=True)
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        # x: (B, C, T) -> (B, T, C) for attention
+        x_t = x.transpose(1, 2)
+        attn_out, _ = self.attn(x_t, x_t, x_t)
+        x_t = self.norm(x_t + self.dropout(attn_out))
+        return x_t.transpose(1, 2)  # back to (B, C, T)
+
+
+# ============================================================
+# Sensor Joint Diffusion v2 — Concatenation Conditioning
 # ============================================================
 class SensorJointDiffusion(nn.Module):
     """
-    Joint diffusion model for 7 sensor modalities.
-    Configurable via modality_specs dict.
+    Joint diffusion for 7 sensor modalities.
+
+    Conditioning approach:
+    1. Each condition latent is interpolated to target temporal length
+    2. All conditions are concatenated along channel dim with z_t
+    3. A learnable per-sensor embedding is added to distinguish sensors
+    4. Processed through Conv1d + Self-Attention blocks
     """
 
     def __init__(
@@ -123,45 +95,53 @@ class SensorJointDiffusion(nn.Module):
         hidden_dim=256,
         t_dim=128,
         num_heads=4,
-        num_conv_blocks=4,
-        num_attn_blocks=3,
+        num_conv_blocks=6,
+        num_attn_blocks=2,
         dropout=0.1,
     ):
-        """
-        modality_specs: dict {name: (latent_dim, seq_len)}
-            e.g. {"phone_acc": (8, 100), "watch_acc": (8, 34), ...}
-        """
         super().__init__()
         self.modality_specs = modality_specs
         self.hidden_dim = hidden_dim
+        self.sensor_names = list(modality_specs.keys())
+        self.n_sensors = len(self.sensor_names)
+
+        # All sensors have the same latent_dim (z=8)
+        self.latent_dim = list(modality_specs.values())[0][0]
 
         # Time embedding
         self.t_embed = SinusoidalTimeEmbedding(t_dim)
+        self.t_proj = nn.Sequential(
+            nn.Linear(t_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
 
-        # Per-modality input projections
-        self.input_projs = nn.ModuleDict({
-            name: nn.Conv1d(latent_dim, hidden_dim, 1)
-            for name, (latent_dim, _) in modality_specs.items()
-        })
+        # Learnable sensor-type embeddings (added to each condition channel)
+        # +1 for the "missing" embedding (when a condition is None)
+        self.sensor_embeddings = nn.Embedding(self.n_sensors + 1, self.latent_dim)
+        self.sensor_name_to_idx = {name: i for i, name in enumerate(self.sensor_names)}
+        self.missing_idx = self.n_sensors  # index for "missing" embedding
 
-        # Positional encoding (max_len covers concatenated conditions)
-        self.pos_encoding = TemporalPositionalEncoding(hidden_dim, max_len=500)
+        # Input projection: z_t (latent_dim) + n_conditions * latent_dim -> hidden_dim
+        # Each condition is latent_dim channels after interpolation
+        # Total input = latent_dim * (1 + n_conditions) where n_conditions = n_sensors - 1
+        total_input_dim = self.latent_dim * self.n_sensors  # target + all conditions
+        self.input_proj = nn.Conv1d(total_input_dim, hidden_dim, 1)
 
-        # Cross-modal attention blocks
-        self.cross_attn_blocks = nn.ModuleList([
-            CrossModalAttention(hidden_dim, num_heads, dropout)
-            for _ in range(num_attn_blocks)
-        ])
-        self.attn_norms = nn.ModuleList([
-            nn.LayerNorm(hidden_dim)
-            for _ in range(num_attn_blocks)
-        ])
-
-        # Temporal conv blocks
+        # Conv blocks (with FiLM time conditioning)
         self.conv_blocks = nn.ModuleList([
-            TemporalConvBlock(hidden_dim, t_dim, kernel_size=3, dropout=dropout)
+            ResConvBlock(hidden_dim, hidden_dim, kernel_size=3, dropout=dropout)
             for _ in range(num_conv_blocks)
         ])
+
+        # Self-attention blocks (interleaved with conv)
+        self.attn_blocks = nn.ModuleList([
+            SelfAttentionBlock(hidden_dim, num_heads, dropout)
+            for _ in range(num_attn_blocks)
+        ])
+
+        # Insert attention after every N conv blocks
+        self.attn_after_conv = num_conv_blocks // (num_attn_blocks + 1)
 
         # Per-modality output projections (initialized to zero)
         self.output_projs = nn.ModuleDict({
@@ -175,53 +155,71 @@ class SensorJointDiffusion(nn.Module):
     def forward(self, target_modality, z_t, t, conditions):
         """
         Args:
-            target_modality: str, which sensor to denoise
-            z_t: (B, D, T') noisy target latent
-            t: (B,) diffusion timestep
-            conditions: dict {name: Tensor (B, D, T') or None}
+            target_modality: str
+            z_t: (B, D, T_target) noisy target
+            t: (B,) timestep
+            conditions: dict {name: (B, D, T_i) or None}
 
         Returns:
-            predicted noise (B, D, T')
+            noise prediction (B, D, T_target)
         """
         B = z_t.shape[0]
+        T_target = z_t.shape[2]
+        device = z_t.device
 
         # Time embedding
-        t_emb = self.t_embed(t)
+        t_emb = self.t_proj(self.t_embed(t))  # (B, hidden_dim)
 
-        # Project target
-        target_hidden = self.input_projs[target_modality](z_t)
+        # Build input: concat target + all conditions along channel dim
+        # Target gets its sensor embedding added
+        target_idx = self.sensor_name_to_idx[target_modality]
+        target_emb = self.sensor_embeddings(
+            torch.tensor(target_idx, device=device)
+        )  # (latent_dim,)
+        z_target = z_t + target_emb[None, :, None]  # (B, D, T_target)
 
-        # Project and concatenate conditions
-        cond_list = []
-        for name, latent in conditions.items():
-            if latent is not None and name != target_modality:
-                cond_list.append(self.input_projs[name](latent))
+        channel_list = [z_target]
 
-        if cond_list:
-            condition_concat = torch.cat(cond_list, dim=2)
-        else:
-            condition_concat = torch.zeros(B, self.hidden_dim, 1, device=z_t.device)
+        for name in self.sensor_names:
+            if name == target_modality:
+                continue
 
-        # (B, C, T) -> (B, T, C) for attention
-        target_seq = target_hidden.transpose(1, 2)
-        condition_seq = condition_concat.transpose(1, 2)
+            cond = conditions.get(name, None)
+            if cond is not None:
+                # Interpolate condition to target temporal length
+                if cond.shape[2] != T_target:
+                    cond_interp = F.interpolate(
+                        cond.float(), size=T_target, mode='linear', align_corners=False
+                    )
+                else:
+                    cond_interp = cond
 
-        # Add positional encoding
-        target_seq = self.pos_encoding(target_seq)
-        condition_seq = self.pos_encoding(condition_seq)
+                # Add sensor embedding
+                idx = self.sensor_name_to_idx[name]
+                emb = self.sensor_embeddings(torch.tensor(idx, device=device))
+                cond_interp = cond_interp + emb[None, :, None]
+            else:
+                # Missing condition: use learned "missing" embedding, broadcast to shape
+                emb = self.sensor_embeddings(torch.tensor(self.missing_idx, device=device))
+                cond_interp = emb[None, :, None].expand(B, -1, T_target)
 
-        # Cross-attention blocks
-        h = target_seq
-        for attn, norm in zip(self.cross_attn_blocks, self.attn_norms):
-            attn_out = attn(h, condition_seq, condition_seq)
-            h = norm(h + attn_out)
+            channel_list.append(cond_interp)
 
-        # Back to (B, C, T)
-        h = h.transpose(1, 2)
+        # Concatenate: (B, D * n_sensors, T_target)
+        x = torch.cat(channel_list, dim=1)
 
-        # Temporal conv blocks with time conditioning
-        for conv_block in self.conv_blocks:
+        # Project to hidden dim
+        h = self.input_proj(x)  # (B, hidden_dim, T_target)
+
+        # Process through conv + attention blocks
+        attn_idx = 0
+        for i, conv_block in enumerate(self.conv_blocks):
             h = conv_block(h, t_emb)
+
+            # Insert self-attention periodically
+            if (i + 1) % max(self.attn_after_conv, 1) == 0 and attn_idx < len(self.attn_blocks):
+                h = self.attn_blocks[attn_idx](h)
+                attn_idx += 1
 
         # Output projection
         noise_pred = self.output_projs[target_modality](h)
@@ -247,8 +245,8 @@ def create_sensor_diffusion_model(
     modality_specs=None,
     hidden_dim=256,
     num_heads=4,
-    num_conv_blocks=4,
-    num_attn_blocks=3,
+    num_conv_blocks=6,
+    num_attn_blocks=2,
     dropout=0.1,
 ):
     specs = modality_specs or DEFAULT_SENSOR_SPECS
