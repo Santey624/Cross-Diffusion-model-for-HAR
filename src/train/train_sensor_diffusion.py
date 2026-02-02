@@ -1,6 +1,7 @@
 # ============================================================
 # Train Sensor-Level Joint Diffusion Model
-# 7 sensor modalities, cosine schedule, min-SNR loss
+# Shared latent space: all latents (B, D, T_SHARED)
+# Cosine schedule, min-SNR loss, full conditioning
 # ============================================================
 
 from pathlib import Path
@@ -11,7 +12,8 @@ from tqdm import tqdm
 import random
 import math
 
-from src.models.sensor_joint_diffusion import create_sensor_diffusion_model, DEFAULT_SENSOR_SPECS
+from src.models.sensor_joint_diffusion import create_sensor_diffusion_model
+from src.models.sensor_vae import SENSOR_NAMES
 
 
 # ============================================================
@@ -44,9 +46,6 @@ USE_AMP = True
 
 # Min-SNR loss weighting
 MIN_SNR_GAMMA = 5.0
-
-# Sensor names
-SENSOR_NAMES = list(DEFAULT_SENSOR_SPECS.keys())
 
 
 # ============================================================
@@ -104,7 +103,7 @@ def main():
     print(f"Device: {DEVICE}")
     print(f"{'='*60}\n")
 
-    # Load latents
+    # Load latents (all same shape now: (N, D, T_SHARED))
     print("Loading sensor latents...")
     latents = {}
     for name in SENSOR_NAMES:

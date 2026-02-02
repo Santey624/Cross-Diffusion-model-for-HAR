@@ -1,6 +1,6 @@
 # ============================================================
-# Train Sensor-Level Multimodal VAE
-# 7 independent per-sensor VAEs (each 3ch, z=8)
+# Train Sensor-Level Multimodal VAE — Shared Latent Space
+# Shared encoder/decoder, per-sensor projections, alignment loss
 # ============================================================
 
 from torch.utils.data import DataLoader, ConcatDataset
@@ -26,6 +26,7 @@ LR = 1e-3
 
 BETA = 5e-5
 KL_WARMUP_EPOCHS = 30
+ALIGN_WEIGHT = 0.1
 
 NUM_WORKERS = 4
 PIN_MEMORY = True
@@ -111,7 +112,7 @@ test_loader = DataLoader(
 
 
 # Model
-print("\nCreating SensorMultiModalVAE (7 sensors, z=8 each)...")
+print("\nCreating SensorMultiModalVAE (shared latent space)...")
 model = SensorMultiModalVAE().to(DEVICE)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"Parameters: {n_params / 1e6:.2f}M")
@@ -121,6 +122,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
 # Training loop
 print(f"\nStarting training for {EPOCHS} epochs on {DEVICE}...")
+print(f"Alignment weight: {ALIGN_WEIGHT}")
 print(f"{'='*60}\n")
 
 for epoch in range(1, EPOCHS + 1):
@@ -130,7 +132,7 @@ for epoch in range(1, EPOCHS + 1):
     warmup = min(epoch / KL_WARMUP_EPOCHS, 1.0)
     beta_eff = BETA * warmup * warmup
 
-    train_tot = train_rec = train_kl = 0.0
+    train_tot = train_rec = train_kl = train_align = 0.0
 
     for batch in tqdm(train_loader, desc=f"[Train] Epoch {epoch}/{EPOCHS}", leave=False):
         sensor_data = {k: batch[k].to(DEVICE, non_blocking=True) for k in SENSOR_NAMES}
@@ -139,7 +141,8 @@ for epoch in range(1, EPOCHS + 1):
 
         with torch.cuda.amp.autocast():
             outputs = model(sensor_data)
-            loss, parts = sensor_vae_loss(outputs, sensor_data, beta=beta_eff)
+            loss, parts = sensor_vae_loss(outputs, sensor_data,
+                                          beta=beta_eff, align_weight=ALIGN_WEIGHT)
 
         scaler.scale(loss).backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -149,14 +152,16 @@ for epoch in range(1, EPOCHS + 1):
         train_tot += loss.item()
         train_rec += parts["recon"].item()
         train_kl += parts["kl"].item()
+        train_align += parts["align"].item()
 
     train_tot /= len(train_loader)
     train_rec /= len(train_loader)
     train_kl /= len(train_loader)
+    train_align /= len(train_loader)
 
     # ---------- EVAL ----------
     model.eval()
-    test_tot = test_rec = test_kl = 0.0
+    test_tot = test_rec = test_kl = test_align = 0.0
 
     with torch.no_grad():
         for batch in tqdm(test_loader, desc=f"[Eval ] Epoch {epoch}/{EPOCHS}", leave=False):
@@ -164,20 +169,23 @@ for epoch in range(1, EPOCHS + 1):
 
             with torch.cuda.amp.autocast():
                 outputs = model(sensor_data)
-                loss, parts = sensor_vae_loss(outputs, sensor_data, beta=beta_eff)
+                loss, parts = sensor_vae_loss(outputs, sensor_data,
+                                              beta=beta_eff, align_weight=ALIGN_WEIGHT)
 
             test_tot += loss.item()
             test_rec += parts["recon"].item()
             test_kl += parts["kl"].item()
+            test_align += parts["align"].item()
 
     test_tot /= len(test_loader)
     test_rec /= len(test_loader)
     test_kl /= len(test_loader)
+    test_align /= len(test_loader)
 
     print(
         f"\nEpoch {epoch:03d} | beta={beta_eff:.2e}\n"
-        f"Train: loss={train_tot:.4f}, recon={train_rec:.4f}, kl={train_kl:.4f}\n"
-        f"Test : loss={test_tot:.4f}, recon={test_rec:.4f}, kl={test_kl:.4f}\n"
+        f"Train: loss={train_tot:.4f}, recon={train_rec:.4f}, kl={train_kl:.4f}, align={train_align:.4f}\n"
+        f"Test : loss={test_tot:.4f}, recon={test_rec:.4f}, kl={test_kl:.4f}, align={test_align:.4f}\n"
     )
 
     # ---------- CHECKPOINT ----------

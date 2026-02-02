@@ -11,10 +11,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from src.models.sensor_vae import SensorMultiModalVAE, SENSOR_NAMES
-from src.models.sensor_joint_diffusion import (
-    create_sensor_diffusion_model, DEFAULT_SENSOR_SPECS,
-)
-from src.data.cogage_sensor_dataset import DEVICE_GROUPS
+from src.models.sensor_joint_diffusion import create_sensor_diffusion_model
 
 
 # ============================================================
@@ -127,13 +124,13 @@ def main():
     print(f"Schedule: {schedule_type}, T: {T}, Epoch: {ckpt['epoch']}, Loss: {ckpt['loss']:.6f}")
 
     # Load VAE
-    print("Loading Sensor VAE...")
+    print("Loading Sensor VAE (shared latent space)...")
     vae = SensorMultiModalVAE().to(DEVICE)
     vae_ckpt = torch.load(VAE_CHECKPOINT, map_location=DEVICE)
     vae.load_state_dict(vae_ckpt["model_state"])
     vae.eval()
 
-    # Load latents
+    # Load latents (all same shape: (N, D, T_SHARED))
     print("Loading sensor latents...")
     latents = {}
     for name in SENSOR_NAMES:
@@ -210,11 +207,10 @@ def main():
             gt = latents[target_name].to(DEVICE)
             latent_mse = F.mse_loss(imputed, gt).item()
 
-            # Decode with VAE
+            # Decode with VAE (using shared decoder)
             with torch.no_grad():
-                decoder = vae.vaes[target_name].decoder
-                imputed_signals = decoder(imputed).cpu()
-                gt_signals = decoder(gt).cpu()
+                imputed_signals = vae.decode_sensor(target_name, imputed).cpu()
+                gt_signals = vae.decode_sensor(target_name, gt).cpu()
 
             signal_mse = F.mse_loss(imputed_signals, gt_signals).item()
             per_sample = ((imputed_signals - gt_signals) ** 2).mean(dim=(1, 2))
