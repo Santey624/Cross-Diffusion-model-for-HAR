@@ -34,9 +34,13 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Evaluation scenarios
 SCENARIOS = {
-    # Single sensor missing
+    # All 7 single-sensor missing
     "single_phone_acc":   {"missing": ["phone_acc"]},
+    "single_phone_gyro":  {"missing": ["phone_gyro"]},
+    "single_phone_grav":  {"missing": ["phone_grav"]},
+    "single_phone_lacc":  {"missing": ["phone_lacc"]},
     "single_watch_acc":   {"missing": ["watch_acc"]},
+    "single_watch_gyro":  {"missing": ["watch_gyro"]},
     "single_glasses_acc": {"missing": ["glasses_acc"]},
     # Device-level missing
     "device_phone":   {"missing": ["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"]},
