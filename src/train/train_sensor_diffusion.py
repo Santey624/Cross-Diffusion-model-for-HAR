@@ -45,19 +45,8 @@ USE_AMP = True
 # Min-SNR loss weighting
 MIN_SNR_GAMMA = 5.0
 
-# Sensor names and device groups
+# Sensor names
 SENSOR_NAMES = list(DEFAULT_SENSOR_SPECS.keys())
-
-DEVICE_GROUPS = {
-    "phone": ["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"],
-    "watch": ["watch_acc", "watch_gyro"],
-    "glasses": ["glasses_acc"],
-}
-
-SENSOR_TO_DEVICE = {}
-for dev, sensors in DEVICE_GROUPS.items():
-    for s in sensors:
-        SENSOR_TO_DEVICE[s] = dev
 
 
 # ============================================================
@@ -92,54 +81,14 @@ def make_schedule(T, schedule_type, device):
 
 
 # ============================================================
-# HIERARCHICAL CONDITION MASKING
+# CONDITION BUILDER (full conditioning, no masking)
 # ============================================================
-def mask_conditions(target_name, batch_data):
-    """
-    Hierarchical masking strategy:
-    - 10% drop ALL conditions (for CFG)
-    - 20% drop entire device group
-    - 20% drop 1-3 random individual sensors
-    - 50% full conditioning (all except target)
-    """
-    r = random.random()
-
-    if r < 0.10:
-        # Drop all
-        return {k: None for k in SENSOR_NAMES}
-
-    elif r < 0.30:
-        # Drop entire device group (not the target's device)
-        target_device = SENSOR_TO_DEVICE[target_name]
-        other_devices = [d for d in DEVICE_GROUPS if d != target_device]
-        if other_devices:
-            drop_device = random.choice(other_devices)
-            drop_set = set(DEVICE_GROUPS[drop_device])
-        else:
-            drop_set = set()
-
-        return {
-            k: (None if k == target_name or k in drop_set else batch_data[k])
-            for k in SENSOR_NAMES
-        }
-
-    elif r < 0.50:
-        # Drop 1-3 random individual sensors
-        available = [k for k in SENSOR_NAMES if k != target_name]
-        n_drop = random.randint(1, min(3, len(available)))
-        to_drop = set(random.sample(available, n_drop))
-
-        return {
-            k: (None if k == target_name or k in to_drop else batch_data[k])
-            for k in SENSOR_NAMES
-        }
-
-    else:
-        # Full conditioning
-        return {
-            k: (batch_data[k] if k != target_name else None)
-            for k in SENSOR_NAMES
-        }
+def build_conditions(target_name, batch_data):
+    """All sensors except target are provided as conditions."""
+    return {
+        k: (batch_data[k] if k != target_name else None)
+        for k in SENSOR_NAMES
+    }
 
 
 # ============================================================
@@ -239,8 +188,8 @@ def main():
             noise = torch.randn_like(z0)
             z_t = sqrt_ab[t].view(-1, 1, 1) * z0 + sqrt_1_ab[t].view(-1, 1, 1) * noise
 
-            # Mask conditions
-            conditions = mask_conditions(target_name, batch_data)
+            # Build conditions (all except target)
+            conditions = build_conditions(target_name, batch_data)
 
             # Forward
             opt.zero_grad(set_to_none=True)
