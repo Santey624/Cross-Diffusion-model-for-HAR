@@ -24,7 +24,9 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 VAE_CHECKPOINT = "checkpoints/sensor_vae_epoch_047.pt"
 DIFFUSION_DIR = Path("checkpoints/sensor_diffusion")
-CLASSIFIER_CHECKPOINT = "checkpoints/activity_classifier/best_model.pt"
+# Switch between regular and robust classifier
+# CLASSIFIER_CHECKPOINT = "checkpoints/activity_classifier/best_model.pt"
+CLASSIFIER_CHECKPOINT = "checkpoints/activity_classifier_robust/best_model.pt"
 NORMALIZER_PATH = "data/sensor_normalizer.npz"
 
 DATA_ROOTS = {
