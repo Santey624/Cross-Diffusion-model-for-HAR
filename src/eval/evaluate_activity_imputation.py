@@ -22,7 +22,7 @@ from src.data.sensor_normalizer import SensorNormalizer
 # ============================================================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-VAE_CHECKPOINT = "checkpoints/sensor_vae_epoch_047.pt"
+VAE_CHECKPOINT = "checkpoints/sensor_vae_best.pt"
 DIFFUSION_DIR = Path("checkpoints/sensor_diffusion")
 # Switch between regular and robust classifier
 # CLASSIFIER_CHECKPOINT = "checkpoints/activity_classifier/best_model.pt"

@@ -19,7 +19,7 @@ from src.models.sensor_joint_diffusion import create_sensor_diffusion_model
 # ============================================================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-VAE_CHECKPOINT = "checkpoints/sensor_vae_epoch_047.pt"
+VAE_CHECKPOINT = "checkpoints/sensor_vae_best.pt"
 DIFFUSION_DIR = Path("checkpoints/sensor_diffusion")
 LATENTS_DIR = Path("data/sensor_latents")
 

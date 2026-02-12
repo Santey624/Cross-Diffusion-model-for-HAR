@@ -21,12 +21,14 @@ from src.losses.sensor_vae_loss import sensor_vae_loss
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 BATCH_SIZE = 32
-EPOCHS = 50
+EPOCHS = 80
 LR = 1e-3
 
-BETA = 5e-5
-KL_WARMUP_EPOCHS = 30
-ALIGN_WEIGHT = 0.1
+# Increased beta for smoother latent space (better for diffusion)
+BETA = 1e-3
+KL_WARMUP_EPOCHS = 40
+# Reduced alignment to preserve sensor-specific information
+ALIGN_WEIGHT = 0.05
 
 NUM_WORKERS = 4
 PIN_MEMORY = True
@@ -122,8 +124,10 @@ optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
 # Training loop
 print(f"\nStarting training for {EPOCHS} epochs on {DEVICE}...")
-print(f"Alignment weight: {ALIGN_WEIGHT}")
+print(f"Beta: {BETA}, Alignment weight: {ALIGN_WEIGHT}")
 print(f"{'='*60}\n")
+
+best_recon = float('inf')
 
 for epoch in range(1, EPOCHS + 1):
 
@@ -195,9 +199,24 @@ for epoch in range(1, EPOCHS + 1):
             "model_state": model.state_dict(),
             "optimizer_state": optimizer.state_dict(),
             "beta": beta_eff,
+            "test_recon": test_rec,
         },
         CHECKPOINT_DIR / f"sensor_vae_epoch_{epoch:03d}.pt"
     )
+
+    # Save best model (lowest test recon loss)
+    if epoch == 1 or test_rec < best_recon:
+        best_recon = test_rec
+        torch.save(
+            {
+                "epoch": epoch,
+                "model_state": model.state_dict(),
+                "optimizer_state": optimizer.state_dict(),
+                "beta": beta_eff,
+                "test_recon": test_rec,
+            },
+            CHECKPOINT_DIR / "sensor_vae_best.pt"
+        )
 
 print(f"{'='*60}")
 print("Sensor VAE training finished.")
