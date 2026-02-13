@@ -21,10 +21,17 @@ from torch.utils.data import ConcatDataset
 # ============================================================
 # CONFIG
 # ============================================================
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--diffusion-dir", type=str, default="checkpoints/sensor_diffusion",
+                    help="Directory containing diffusion checkpoint")
+args, _ = parser.parse_known_args()
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 VAE_CHECKPOINT = "checkpoints/sensor_vae_best.pt"
-DIFFUSION_DIR = Path("checkpoints/sensor_diffusion")
+DIFFUSION_DIR = Path(args.diffusion_dir)
 NORMALIZER_PATH = "data/sensor_normalizer.npz"
 
 DATA_ROOTS = {
