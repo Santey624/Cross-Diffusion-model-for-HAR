@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+from typing import Optional, Callable
 
 
 # Sensor key -> (npy file suffix, sequence length)
@@ -36,14 +37,22 @@ class CogAgeSensorDataset(Dataset):
     Returns a dict with 7 keys, each -> torch.Tensor of shape (T, 3).
     """
 
-    def __init__(self, root_dir, split="training", transform=None):
+    def __init__(
+        self,
+        root_dir,
+        split: str = "training",
+        transform: Optional[Callable] = None,
+        augmentation: Optional[Callable] = None,
+    ):
         """
         root_dir: data/cogage/python/arrays/{blho|bbh|state}
         split: "training" or "testing"
-        transform: callable that takes dict of numpy arrays -> dict of numpy arrays
+        transform: Normalizer callable (applied after augmentation)
+        augmentation: SensorAugmentation callable (applied before normalization)
         """
         self.root_dir = Path(root_dir) / split
         self.transform = transform
+        self.augmentation = augmentation
 
         if not self.root_dir.exists():
             raise FileNotFoundError(self.root_dir)
@@ -69,8 +78,20 @@ class CogAgeSensorDataset(Dataset):
     def __getitem__(self, idx):
         sample = {k: self.data[k][idx].astype(np.float32) for k in SENSOR_FILES}
 
-        if self.transform is not None:
-            sample = self.transform(sample)
+        # Convert to tensors first for augmentation
+        sample = {k: torch.from_numpy(v) for k, v in sample.items()}
 
-        return {k: torch.from_numpy(v) if isinstance(v, np.ndarray) else v
-                for k, v in sample.items()}
+        # Apply augmentation (if provided)
+        if self.augmentation is not None:
+            sample = self.augmentation(sample)
+
+        # Apply normalization transform (if provided)
+        if self.transform is not None:
+            # Transform expects numpy, convert back
+            sample_np = {k: v.numpy() if isinstance(v, torch.Tensor) else v
+                         for k, v in sample.items()}
+            sample = self.transform(sample_np)
+            sample = {k: torch.from_numpy(v) if isinstance(v, np.ndarray) else v
+                      for k, v in sample.items()}
+
+        return sample
