@@ -321,13 +321,14 @@ def main():
                                 final_latents[name] = imputed_norm * std + mean
 
                             elif method == "zeros":
-                                # Fill with zeros
+                                # Fill with zeros (same shape as real latent)
                                 final_latents[name] = torch.zeros_like(latents[name])
 
                             elif method == "mean":
-                                # Fill with mean (from training data)
-                                mean = norm_stats[name]["mean"].to(DEVICE)
-                                final_latents[name] = mean.expand(B, -1, -1)
+                                # Fill with mean (expand to full shape)
+                                mean = norm_stats[name]["mean"].to(DEVICE)  # (1, 8, 1)
+                                T_shared = latents[name].shape[2]
+                                final_latents[name] = mean.expand(B, -1, T_shared)
                         else:
                             final_latents[name] = latents[name]
 
