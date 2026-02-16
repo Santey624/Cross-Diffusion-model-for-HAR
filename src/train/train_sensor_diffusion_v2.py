@@ -196,8 +196,8 @@ def main():
             observed_mask = generate_random_masks(B, K, MASK_MIN, MASK_MAX, DEVICE)
             missing_mask = 1.0 - observed_mask  # (B, K) — 1 where missing
 
-            # Count missing for logging
-            n_missing = int(missing_mask.sum(dim=1).mean().item())
+            # Count missing per sample for logging
+            n_missing_per_batch = missing_mask.sum(dim=1)  # (B,)
 
             # Sample timestep and noise
             t = torch.randint(0, T, (B,), device=DEVICE)
@@ -239,10 +239,15 @@ def main():
             scaler.update()
 
             epoch_loss += loss.item()
-            epoch_loss_per_mask[min(n_missing, MASK_MAX)] += loss.item()
-            epoch_count_per_mask[min(n_missing, MASK_MAX)] += 1
 
-            pbar.set_postfix(loss=f"{loss.item():.4f}", missing=n_missing)
+            # Track loss per mask count (per sample in batch)
+            for nm in n_missing_per_batch:
+                nm_int = int(nm.item())
+                if MASK_MIN <= nm_int <= MASK_MAX:
+                    epoch_loss_per_mask[nm_int] += loss.item() / B
+                    epoch_count_per_mask[nm_int] += 1
+
+            pbar.set_postfix(loss=f"{loss.item():.4f}")
 
         lr_sched.step()
         n_batches = len(dl)
