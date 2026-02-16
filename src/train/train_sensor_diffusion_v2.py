@@ -184,8 +184,6 @@ def main():
     for epoch in range(1, EPOCHS + 1):
         model.train()
         epoch_loss = 0.0
-        epoch_loss_per_mask = {i: 0.0 for i in range(MASK_MIN, MASK_MAX + 1)}
-        epoch_count_per_mask = {i: 0 for i in range(MASK_MIN, MASK_MAX + 1)}
 
         pbar = tqdm(dl, desc=f"Epoch {epoch}/{EPOCHS}", leave=False)
         for (batch_stacked,) in pbar:
@@ -239,14 +237,6 @@ def main():
             scaler.update()
 
             epoch_loss += loss.item()
-
-            # Track loss per mask count (per sample in batch)
-            for nm in n_missing_per_batch:
-                nm_int = int(nm.item())
-                if MASK_MIN <= nm_int <= MASK_MAX:
-                    epoch_loss_per_mask[nm_int] += loss.item() / B
-                    epoch_count_per_mask[nm_int] += 1
-
             pbar.set_postfix(loss=f"{loss.item():.4f}")
 
         lr_sched.step()
@@ -255,11 +245,7 @@ def main():
 
         if epoch % 10 == 0 or epoch == 1:
             lr = lr_sched.get_last_lr()[0]
-            mask_losses = " | ".join(
-                f"m{k}:{epoch_loss_per_mask[k] / max(epoch_count_per_mask[k], 1):.4f}"
-                for k in range(MASK_MIN, MASK_MAX + 1)
-            )
-            print(f"Epoch {epoch:3d}/{EPOCHS} | Loss: {avg_loss:.4f} | {mask_losses} | LR: {lr:.2e}")
+            print(f"Epoch {epoch:3d}/{EPOCHS} | Loss: {avg_loss:.4f} | LR: {lr:.2e}")
 
         # Save best
         if avg_loss < best_loss:
