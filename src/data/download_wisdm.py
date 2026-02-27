@@ -79,14 +79,27 @@ def download_wisdm():
 
 def extract_wisdm(zip_path):
     extract_dir = RAW_DIR / "extracted"
-    if extract_dir.exists():
-        print(f"Already extracted: {extract_dir}")
-        return extract_dir
 
-    print("Extracting...")
-    with zipfile.ZipFile(zip_path, 'r') as zf:
-        zf.extractall(extract_dir)
-    print(f"Extracted to {extract_dir}")
+    # Extract outer ZIP
+    if not extract_dir.exists():
+        print("Extracting outer ZIP...")
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            zf.extractall(extract_dir)
+        print(f"Extracted to {extract_dir}")
+
+    # Check for inner wisdm-dataset.zip
+    inner_zip = extract_dir / "wisdm-dataset.zip"
+    final_dir = extract_dir / "wisdm-dataset"
+
+    if inner_zip.exists() and not final_dir.exists():
+        print("Extracting inner wisdm-dataset.zip...")
+        with zipfile.ZipFile(inner_zip, 'r') as zf:
+            zf.extractall(final_dir)
+        print(f"Extracted inner dataset to {final_dir}")
+
+    # Return the directory with actual data
+    if final_dir.exists():
+        return final_dir
     return extract_dir
 
 
