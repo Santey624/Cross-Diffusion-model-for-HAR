@@ -70,10 +70,11 @@ def download_wisdm():
         print(f"Already downloaded: {zip_path}")
         return zip_path
 
-    print(f"Downloading WISDM dataset (~296MB)...")
-    urllib.request.urlretrieve(WISDM_URL, zip_path)
-    print(f"Downloaded to {zip_path}")
-    return zip_path
+    print(f"ERROR: WISDM zip not found at {zip_path}")
+    print(f"Please download manually from:")
+    print(f"  {WISDM_URL}")
+    print(f"And save to: {zip_path}")
+    raise FileNotFoundError(f"WISDM dataset not found at {zip_path}")
 
 
 def extract_wisdm(zip_path):
