@@ -25,7 +25,7 @@ from src.data.sensor_normalizer import SensorNormalizer
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 VAE_CHECKPOINT = "checkpoints/sensor_vae_best.pt"
-DIFFUSION_DIR = Path("checkpoints/sensor_diffusion_v2")
+DIFFUSION_DIR = Path("checkpoints/sensor_diffusion_v2_pretrain")
 CLASSIFIER_CHECKPOINT = "checkpoints/activity_classifier_robust/best_model.pt"
 NORMALIZER_PATH = "data/sensor_normalizer.npz"
 
