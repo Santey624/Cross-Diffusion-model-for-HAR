@@ -1,6 +1,6 @@
 # ============================================================
 # Evaluate State Activity Recognition (6 classes)
-# With Diffusion V2 imputation
+# With Diffusion V2 imputation vs Mean-Fill baseline
 # ============================================================
 
 from pathlib import Path
@@ -26,7 +26,6 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 VAE_CHECKPOINT = "checkpoints/sensor_vae_best.pt"
 DIFFUSION_DIR = Path("checkpoints/sensor_diffusion_v2")
-# Will train classifier if not exists
 CLASSIFIER_CHECKPOINT = "checkpoints/activity_classifier_state/best_model.pt"
 NORMALIZER_PATH = "data/sensor_normalizer.npz"
 
@@ -142,11 +141,11 @@ def main():
     norm_stats = torch.load(DIFFUSION_DIR / "normalization_stats.pt", map_location=DEVICE)
     sched = make_schedule(T_diff, diff_ckpt["schedule"])
 
-    # Load or train classifier
+    # Load classifier
     print("\nLoading activity classifier...")
     if not Path(CLASSIFIER_CHECKPOINT).exists():
         print(f"Classifier not found at {CLASSIFIER_CHECKPOINT}")
-        print("Please train it first with: src.train.train_activity_classifier --task state")
+        print("Please train it first with: python -m src.train.train_activity_classifier_state")
         return
 
     classifier_ckpt = torch.load(CLASSIFIER_CHECKPOINT, map_location=DEVICE)
@@ -158,21 +157,37 @@ def main():
     classifier.eval()
     print(f"Classifier: {test_dataset.n_classes} classes")
 
-    # Evaluation scenarios
+    # Compute global mean latents for mean-fill baseline (from test set)
+    print("\nComputing mean latents for mean-fill baseline...")
+    mean_latents_global = {k: [] for k in SENSOR_NAMES}
+    with torch.no_grad():
+        for batch in test_loader:
+            sensor_data = {k: batch[k].to(DEVICE) for k in SENSOR_NAMES}
+            outputs = vae(sensor_data)
+            for k in SENSOR_NAMES:
+                mean_latents_global[k].append(outputs[k]["mu"].cpu())
+    mean_latents_global = {k: torch.cat(v, dim=0).mean(dim=0, keepdim=True).to(DEVICE)
+                           for k, v in mean_latents_global.items()}
+
+    # Evaluation scenarios: (missing_sensors, use_imputation)
     scenarios = {
-        "all_real": [],
-        "missing_phone_acc": ["phone_acc"],
-        "missing_watch_acc": ["watch_acc"],
-        "missing_phone_all": ["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"],
-        "missing_watch_all": ["watch_acc", "watch_gyro"],
+        "all_real":               ([], True),
+        "phone_acc+diff":         (["phone_acc"], True),
+        "phone_acc+mean":         (["phone_acc"], False),
+        "watch_acc+diff":         (["watch_acc"], True),
+        "watch_acc+mean":         (["watch_acc"], False),
+        "phone_all+diff":         (["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"], True),
+        "phone_all+mean":         (["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"], False),
+        "watch_all+diff":         (["watch_acc", "watch_gyro"], True),
+        "watch_all+mean":         (["watch_acc", "watch_gyro"], False),
     }
 
     results = {}
 
-    for scenario_name, missing_sensors in scenarios.items():
+    for scenario_name, (missing_sensors, use_imputation) in scenarios.items():
         print(f"\n{'='*70}")
         print(f"Scenario: {scenario_name}")
-        print(f"Missing: {missing_sensors if missing_sensors else 'None'}")
+        print(f"Missing: {missing_sensors if missing_sensors else 'None'} | Impute: {use_imputation}")
         print(f"{'='*70}")
 
         all_preds = []
@@ -188,33 +203,33 @@ def main():
                 outputs = vae(sensor_data)
                 latents = {k: outputs[k]["mu"] for k in SENSOR_NAMES}
 
-            # Normalize
-            latents_norm = {}
-            for name in SENSOR_NAMES:
-                mean = norm_stats[name]["mean"].to(DEVICE)
-                std = norm_stats[name]["std"].to(DEVICE)
-                latents_norm[name] = (latents[name] - mean) / std
+            if not missing_sensors:
+                final_latents = latents
+            elif use_imputation:
+                # Normalize
+                latents_norm = {}
+                for name in SENSOR_NAMES:
+                    mean = norm_stats[name]["mean"].to(DEVICE)
+                    std = norm_stats[name]["std"].to(DEVICE)
+                    latents_norm[name] = (latents[name] - mean) / std
 
-            # Stack
-            stacked = torch.stack([latents_norm[name] for name in SENSOR_NAMES], dim=1)
+                stacked = torch.stack([latents_norm[name] for name in SENSOR_NAMES], dim=1)
 
-            # Create mask
-            observed_mask = torch.ones(B, len(SENSOR_NAMES), device=DEVICE)
-            for sensor in missing_sensors:
-                idx = SENSOR_NAMES.index(sensor)
-                observed_mask[:, idx] = 0.0
+                observed_mask = torch.ones(B, len(SENSOR_NAMES), device=DEVICE)
+                for sensor in missing_sensors:
+                    observed_mask[:, SENSOR_NAMES.index(sensor)] = 0.0
 
-            # Impute if needed
-            if missing_sensors:
                 imputed = ddim_sample_v2(diffusion, stacked, observed_mask, sched["alpha_bar"], T_diff, DDIM_STEPS)
-                # Denormalize
                 final_latents = {}
                 for i, name in enumerate(SENSOR_NAMES):
                     mean = norm_stats[name]["mean"].to(DEVICE)
                     std = norm_stats[name]["std"].to(DEVICE)
                     final_latents[name] = imputed[:, i] * std + mean
             else:
-                final_latents = latents
+                # Mean-fill baseline: replace missing with global mean latent
+                final_latents = dict(latents)
+                for name in missing_sensors:
+                    final_latents[name] = mean_latents_global[name].expand(B, -1, -1)
 
             # Classify
             with torch.no_grad():
@@ -235,12 +250,12 @@ def main():
 
     # Summary
     print(f"\n{'='*70}")
-    print("STATE ACTIVITIES - SUMMARY")
+    print("STATE ACTIVITIES - SUMMARY (diff = diffusion imputation, mean = mean-fill)")
     print(f"{'='*70}")
-    print(f"\n{'Scenario':<20} {'Accuracy':<12} {'Macro F1':<12}")
-    print("-" * 45)
+    print(f"\n{'Scenario':<25} {'Accuracy':<12} {'Macro F1':<12}")
+    print("-" * 50)
     for name, metrics in results.items():
-        print(f"{name:<20} {metrics['accuracy']:<12.4f} {metrics['f1_macro']:<12.4f}")
+        print(f"{name:<25} {metrics['accuracy']:<12.4f} {metrics['f1_macro']:<12.4f}")
 
     print(f"\n{'='*70}\n")
 
