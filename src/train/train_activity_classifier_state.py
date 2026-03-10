@@ -55,7 +55,7 @@ def main():
         p.requires_grad = False
 
     # Create classifier
-    classifier = create_activity_classifier(n_classes=n_classes, hidden_dim=HIDDEN_DIM).to(DEVICE)
+    classifier = create_activity_classifier(n_classes=n_classes, hidden_dims=[HIDDEN_DIM, 256, 128]).to(DEVICE)
     n_params = sum(p.numel() for p in classifier.parameters())
     print(f"Classifier params: {n_params/1e6:.2f}M")
 
@@ -77,7 +77,7 @@ def main():
                 outputs = vae(sensor_data)
                 latents = {k: outputs[k]["mu"] for k in SENSOR_NAMES}
 
-            logits = classifier(latents)
+            logits = classifier(latents, SENSOR_NAMES)
             loss = criterion(logits, labels)
 
             opt.zero_grad()
@@ -97,7 +97,7 @@ def main():
 
                 outputs = vae(sensor_data)
                 latents = {k: outputs[k]["mu"] for k in SENSOR_NAMES}
-                preds = classifier(latents).argmax(dim=1)
+                preds = classifier(latents, SENSOR_NAMES).argmax(dim=1)
 
                 correct += (preds == labels).sum().item()
                 total += labels.size(0)
@@ -110,7 +110,7 @@ def main():
                 "epoch": epoch,
                 "model_state": classifier.state_dict(),
                 "accuracy": acc,
-                "config": {"hidden_dim": HIDDEN_DIM, "n_classes": n_classes},
+                "config": {"hidden_dims": [HIDDEN_DIM, 256, 128], "n_classes": n_classes},
             }, OUT_DIR / "best_model.pt")
 
         if epoch % 10 == 0 or epoch == 1:

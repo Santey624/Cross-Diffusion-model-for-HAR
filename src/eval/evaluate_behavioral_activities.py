@@ -156,9 +156,10 @@ def main():
         return
 
     classifier_ckpt = torch.load(CLASSIFIER_CHECKPOINT, map_location=DEVICE)
+    model_type = classifier_ckpt.get("model_type", "mlp")
     classifier = create_activity_classifier(
+        model_type=model_type,
         n_classes=n_classes,
-        hidden_dim=classifier_ckpt["config"]["hidden_dim"],
     ).to(DEVICE)
     classifier.load_state_dict(classifier_ckpt["model_state"])
     classifier.eval()
@@ -225,7 +226,7 @@ def main():
 
             # Classify
             with torch.no_grad():
-                logits = classifier(final_latents)
+                logits = classifier(final_latents, SENSOR_NAMES)
                 preds = logits.argmax(dim=1)
 
             all_preds.extend(preds.cpu().numpy())
