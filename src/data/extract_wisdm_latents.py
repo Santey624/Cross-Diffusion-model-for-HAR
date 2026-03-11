@@ -21,8 +21,8 @@ from src.data.sensor_normalizer import SensorNormalizer
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 BATCH_SIZE = 64
-CHECKPOINT_PATH = "checkpoints/sensor_vae_best.pt"
-NORMALIZER_PATH = "data/sensor_normalizer.npz"
+CHECKPOINT_PATH = "checkpoints/sensor_vae_combined_best.pt"
+NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
 
 WISDM_ROOT = "data/wisdm/arrays"
 OUTPUT_DIR = Path("data/wisdm_latents")

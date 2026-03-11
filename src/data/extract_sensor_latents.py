@@ -19,8 +19,8 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 BATCH_SIZE = 64
 
-CHECKPOINT_PATH = "checkpoints/sensor_vae_best.pt"
-NORMALIZER_PATH = "data/sensor_normalizer.npz"
+CHECKPOINT_PATH = "checkpoints/sensor_vae_combined_best.pt"
+NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
 
 DATA_ROOTS = {
     "blho": "data/cogage/python/arrays/blho",

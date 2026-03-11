@@ -23,9 +23,9 @@ from src.data.sensor_normalizer import SensorNormalizer
 # ============================================================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-VAE_CHECKPOINT = "checkpoints/sensor_vae_best.pt"
+VAE_CHECKPOINT = "checkpoints/sensor_vae_combined_best.pt"
 DIFFUSION_DIR = Path("checkpoints/sensor_diffusion")
-NORMALIZER_PATH = "data/sensor_normalizer.npz"
+NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
 
 DATA_ROOTS = {
     "blho": "data/cogage/python/arrays/blho",

@@ -20,8 +20,8 @@ from src.data.sensor_normalizer import SensorNormalizer
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 STATE_ROOT = "data/cogage/python/arrays/state"
-VAE_CHECKPOINT = "checkpoints/sensor_vae_best.pt"
-NORMALIZER_PATH = "data/sensor_normalizer.npz"
+VAE_CHECKPOINT = "checkpoints/sensor_vae_combined_best.pt"
+NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
 OUT_DIR = Path("checkpoints/activity_classifier_state")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
