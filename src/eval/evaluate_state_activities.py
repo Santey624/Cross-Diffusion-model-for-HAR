@@ -138,9 +138,9 @@ def ddim_sample_v2_guided(model, classifier, stacked_latents, observed_mask,
         pred_x0 = torch.clamp(pred_x0, -5.0, 5.0)
 
         # Classifier guidance: minimize entropy of p(y | pred_x0)
-        if guidance_scale > 0:
+        # Only apply in later steps (i >= ddim_steps//3) when pred_x0 is reliable
+        if guidance_scale > 0 and i >= ddim_steps // 3:
             pred_x0_g = pred_x0.detach().requires_grad_(True)
-            # Denormalize for classifier
             latents_dict = {}
             for ki, name in enumerate(sensor_names):
                 mean = norm_stats[name]["mean"].to(device)
@@ -151,10 +151,8 @@ def ddim_sample_v2_guided(model, classifier, stacked_latents, observed_mask,
             entropy = -(probs * (probs + 1e-8).log()).sum(dim=-1).mean()
             entropy.backward()
             grad = pred_x0_g.grad.clone()
-            # Normalize gradient to avoid scale sensitivity
             grad_norm = grad.norm(dim=(2, 3), keepdim=True).clamp_min(1e-6)
             grad = grad / grad_norm
-            # Only guide missing sensors
             grad = grad * missing_mask[:, :, None, None]
             pred_x0 = (pred_x0 - guidance_scale * grad).clamp(-5.0, 5.0)
 
@@ -237,7 +235,7 @@ def main():
     mean_latents_global = {k: torch.cat(v, dim=0).mean(dim=0, keepdim=True).to(DEVICE)
                            for k, v in mean_latents_global.items()}
 
-    GUIDANCE_SCALE = 1.0
+    GUIDANCE_SCALE = 2.0
 
     # Evaluation scenarios: (missing_sensors, mode)
     # mode: "real" | "diff" | "guided" | "mean"
