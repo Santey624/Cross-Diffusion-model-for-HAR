@@ -56,8 +56,8 @@ FINETUNE_EPOCHS = 200
 FINETUNE_LR = 5e-5
 
 # Masking
-MASK_MIN = 1
-MASK_MAX = 4
+MASK_MIN = 0
+MASK_MAX = 6
 
 
 # ============================================================

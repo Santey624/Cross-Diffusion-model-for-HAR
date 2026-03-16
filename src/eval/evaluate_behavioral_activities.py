@@ -245,20 +245,30 @@ def main():
     scenarios = {
         "all_real":               ([], "real"),
         "phone_acc+diff":         (["phone_acc"], "diff"),
-        "phone_acc+guided":       (["phone_acc"], "guided"),
         "phone_acc+mean":         (["phone_acc"], "mean"),
+        "phone_acc+zero":         (["phone_acc"], "zero"),
         "watch_acc+diff":         (["watch_acc"], "diff"),
-        "watch_acc+guided":       (["watch_acc"], "guided"),
         "watch_acc+mean":         (["watch_acc"], "mean"),
+        "watch_acc+zero":         (["watch_acc"], "zero"),
         "glasses_acc+diff":       (["glasses_acc"], "diff"),
-        "glasses_acc+guided":     (["glasses_acc"], "guided"),
         "glasses_acc+mean":       (["glasses_acc"], "mean"),
+        "glasses_acc+zero":       (["glasses_acc"], "zero"),
         "phone_all+diff":         (["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"], "diff"),
-        "phone_all+guided":       (["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"], "guided"),
         "phone_all+mean":         (["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"], "mean"),
+        "phone_all+zero":         (["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"], "zero"),
         "watch_all+diff":         (["watch_acc", "watch_gyro"], "diff"),
-        "watch_all+guided":       (["watch_acc", "watch_gyro"], "guided"),
         "watch_all+mean":         (["watch_acc", "watch_gyro"], "mean"),
+        "watch_all+zero":         (["watch_acc", "watch_gyro"], "zero"),
+        # Extreme: only one device available
+        "no_phone+diff":          (["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"], "diff"),
+        "no_watch+diff":          (["watch_acc", "watch_gyro"], "diff"),
+        "no_glasses+diff":        (["glasses_acc"], "diff"),
+        "only_watch+diff":        (["phone_acc", "phone_gyro", "phone_grav", "phone_lacc", "glasses_acc"], "diff"),
+        "only_watch+mean":        (["phone_acc", "phone_gyro", "phone_grav", "phone_lacc", "glasses_acc"], "mean"),
+        "only_watch+zero":        (["phone_acc", "phone_gyro", "phone_grav", "phone_lacc", "glasses_acc"], "zero"),
+        "only_phone+diff":        (["watch_acc", "watch_gyro", "glasses_acc"], "diff"),
+        "only_phone+mean":        (["watch_acc", "watch_gyro", "glasses_acc"], "mean"),
+        "only_phone+zero":        (["watch_acc", "watch_gyro", "glasses_acc"], "zero"),
     }
 
     results = {}
@@ -311,11 +321,16 @@ def main():
                     mean = norm_stats[name]["mean"].to(DEVICE)
                     std = norm_stats[name]["std"].to(DEVICE)
                     final_latents[name] = imputed[:, i] * std + mean
-            else:
+            elif mode == "mean":
                 # Mean-fill baseline
                 final_latents = dict(latents)
                 for name in missing_sensors:
                     final_latents[name] = mean_latents_global[name].expand(B, -1, -1)
+            else:
+                # Zero-fill baseline
+                final_latents = dict(latents)
+                for name in missing_sensors:
+                    final_latents[name] = torch.zeros_like(latents[name])
 
             # Classify
             with torch.no_grad():
