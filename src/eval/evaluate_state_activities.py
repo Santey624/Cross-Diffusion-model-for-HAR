@@ -236,7 +236,7 @@ def main():
     mean_latents_global = {k: torch.cat(v, dim=0).mean(dim=0, keepdim=True).to(DEVICE)
                            for k, v in mean_latents_global.items()}
 
-    GUIDANCE_SCALE = 2.0
+    GUIDANCE_SCALE = 1.0
 
     # Evaluation scenarios: (missing_sensors, mode)
     # mode: "real" | "diff" | "guided" | "mean"
