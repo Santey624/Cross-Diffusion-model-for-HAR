@@ -215,7 +215,6 @@ def main():
     classifier = create_activity_classifier(
         model_type=MODEL_TYPE,
         n_classes=n_classes,
-        hidden_dims=HIDDEN_DIMS,
         dropout=DROPOUT,
     ).to(DEVICE)
 
