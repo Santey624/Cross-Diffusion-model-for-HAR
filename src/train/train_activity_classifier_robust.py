@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.models.sensor_vae import SensorMultiModalVAE, SENSOR_NAMES
-from src.models.sensor_joint_diffusion import create_sensor_diffusion_model
+from src.models.sensor_joint_diffusion_v2 import create_sensor_diffusion_v2
 from src.models.activity_classifier import create_activity_classifier
 from src.data.cogage_labeled_dataset import get_combined_labeled_dataset
 from src.data.sensor_normalizer import SensorNormalizer
@@ -84,29 +84,32 @@ def make_schedule(T, schedule_type):
 
 
 # ============================================================
-# FAST DDIM SAMPLER
+# FAST DDIM SAMPLER (V2)
 # ============================================================
 @torch.no_grad()
-def ddim_sample_fast(model, target_modality, shape, conditions, alpha_bar, T, ddim_steps=20):
-    B = shape[0]
-    device = next(model.parameters()).device
-    z = torch.randn(shape, device=device)
-    alpha_bar = alpha_bar.to(device)
+def ddim_sample_v2_fast(model, stacked_latents, observed_mask, alpha_bar, T, ddim_steps=20):
+    B, K, D, T_len = stacked_latents.shape
+    device = stacked_latents.device
+    missing_mask = 1.0 - observed_mask
 
-    # Uniform spacing for speed
-    tau = torch.linspace(T - 1, 0, ddim_steps + 1, device=device).long()
+    z = stacked_latents.clone()
+    noise_init = torch.randn_like(stacked_latents)
+    z = observed_mask[:, :, None, None] * z + missing_mask[:, :, None, None] * noise_init
+
+    alpha_bar = alpha_bar.to(device)
+    tau = torch.linspace(0, 1, ddim_steps + 1, device=device)
+    tau = (tau ** 2 * (T - 1)).long()
+    tau = tau.flip(0)
 
     for i in range(len(tau) - 1):
         t_now = tau[i]
         t_next = tau[i + 1]
         t_batch = torch.full((B,), t_now, device=device, dtype=torch.long)
 
-        noise_pred = model(
-            target_modality=target_modality,
-            z_t=z,
-            t=t_batch,
-            conditions=conditions,
-        )
+        noisy_input = observed_mask[:, :, None, None] * stacked_latents + \
+                      missing_mask[:, :, None, None] * z
+
+        noise_pred = model(noisy_input, t_batch, observed_mask)
 
         ab_now = alpha_bar[t_now]
         ab_next = alpha_bar[t_next]
@@ -115,7 +118,10 @@ def ddim_sample_fast(model, target_modality, shape, conditions, alpha_bar, T, dd
         pred_x0 = torch.clamp(pred_x0, -5.0, 5.0)
 
         dir_zt = torch.sqrt(1 - ab_next) * noise_pred
-        z = torch.sqrt(ab_next) * pred_x0 + dir_zt
+        z_new = torch.sqrt(ab_next) * pred_x0 + dir_zt
+
+        z = observed_mask[:, :, None, None] * stacked_latents + \
+            missing_mask[:, :, None, None] * z_new
 
     return z
 
@@ -189,11 +195,10 @@ def main():
     schedule_type = diff_ckpt["schedule"]
     cfg = diff_ckpt["config"]
 
-    diffusion = create_sensor_diffusion_model(
-        hidden_dim=cfg["hidden_dim"],
+    diffusion = create_sensor_diffusion_v2(
+        d_model=cfg["d_model"],
         num_heads=cfg["num_heads"],
-        num_conv_blocks=cfg["num_conv_blocks"],
-        num_attn_blocks=cfg["num_attn_blocks"],
+        num_blocks=cfg["num_blocks"],
         dropout=0.0,
     ).to(DEVICE)
     diffusion.load_state_dict(diff_ckpt["model_state"])
@@ -257,31 +262,22 @@ def main():
                     std = norm_stats[name]["std"].to(DEVICE)
                     latents_norm[name] = (latents[name] - mean) / std
 
-                # Impute missing sensors
+                stacked = torch.stack([latents_norm[name] for name in SENSOR_NAMES], dim=1)
+                observed_mask = torch.ones(B, len(SENSOR_NAMES), device=DEVICE)
+                for name in missing:
+                    observed_mask[:, SENSOR_NAMES.index(name)] = 0.0
+
+                with torch.no_grad():
+                    imputed = ddim_sample_v2_fast(
+                        diffusion, stacked, observed_mask,
+                        sched["alpha_bar"], T, DDIM_STEPS,
+                    )
+
                 final_latents = {}
-                for name in SENSOR_NAMES:
-                    if name in missing:
-                        conditions = {
-                            k: (latents_norm[k] if k not in missing else None)
-                            for k in SENSOR_NAMES
-                        }
-
-                        with torch.no_grad():
-                            imputed_norm = ddim_sample_fast(
-                                model=diffusion,
-                                target_modality=name,
-                                shape=latents_norm[name].shape,
-                                conditions=conditions,
-                                alpha_bar=sched["alpha_bar"],
-                                T=T,
-                                ddim_steps=DDIM_STEPS,
-                            )
-
-                        mean = norm_stats[name]["mean"].to(DEVICE)
-                        std = norm_stats[name]["std"].to(DEVICE)
-                        final_latents[name] = imputed_norm * std + mean
-                    else:
-                        final_latents[name] = latents[name]
+                for i, name in enumerate(SENSOR_NAMES):
+                    mean = norm_stats[name]["mean"].to(DEVICE)
+                    std = norm_stats[name]["std"].to(DEVICE)
+                    final_latents[name] = imputed[:, i] * std + mean
             else:
                 real_count += 1
                 final_latents = latents
