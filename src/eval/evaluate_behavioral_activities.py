@@ -104,6 +104,67 @@ def ddim_sample_v2(model, stacked_latents, observed_mask, alpha_bar, T, ddim_ste
     return z
 
 
+def ddim_sample_v2_guided(model, classifier, stacked_latents, observed_mask,
+                           alpha_bar, T, sensor_names, norm_stats,
+                           ddim_steps=50, guidance_scale=1.0):
+    """DDIM sampling with classifier guidance via entropy minimization."""
+    B, K, D, T_len = stacked_latents.shape
+    device = stacked_latents.device
+    missing_mask = 1.0 - observed_mask
+
+    z = stacked_latents.clone()
+    noise_init = torch.randn_like(stacked_latents)
+    z = observed_mask[:, :, None, None] * z + missing_mask[:, :, None, None] * noise_init
+
+    alpha_bar = alpha_bar.to(device)
+    tau = torch.linspace(0, 1, ddim_steps + 1, device=device)
+    tau = (tau ** 2 * (T - 1)).long()
+    tau = tau.flip(0)
+
+    for i in range(len(tau) - 1):
+        t_now = tau[i]
+        t_next = tau[i + 1]
+        t_batch = torch.full((B,), t_now, device=device, dtype=torch.long)
+
+        noisy_input = observed_mask[:, :, None, None] * stacked_latents + \
+                      missing_mask[:, :, None, None] * z
+
+        with torch.no_grad():
+            noise_pred = model(noisy_input, t_batch, observed_mask)
+
+        ab_now = alpha_bar[t_now]
+        ab_next = alpha_bar[t_next]
+
+        pred_x0 = (z - torch.sqrt(1 - ab_now) * noise_pred) / torch.sqrt(ab_now)
+        pred_x0 = torch.clamp(pred_x0, -5.0, 5.0)
+
+        # Classifier guidance: minimize entropy of p(y | pred_x0)
+        if guidance_scale > 0:
+            pred_x0_g = pred_x0.detach().requires_grad_(True)
+            latents_dict = {}
+            for ki, name in enumerate(sensor_names):
+                mean = norm_stats[name]["mean"].to(device)
+                std = norm_stats[name]["std"].to(device)
+                latents_dict[name] = pred_x0_g[:, ki] * std + mean
+            logits = classifier(latents_dict, sensor_names)
+            probs = F.softmax(logits, dim=-1)
+            entropy = -(probs * (probs + 1e-8).log()).sum(dim=-1).mean()
+            entropy.backward()
+            grad = pred_x0_g.grad.clone()
+            grad_norm = grad.norm(dim=(2, 3), keepdim=True).clamp_min(1e-6)
+            grad = grad / grad_norm
+            grad = grad * missing_mask[:, :, None, None]
+            pred_x0 = (pred_x0 - guidance_scale * grad).clamp(-5.0, 5.0)
+
+        dir_zt = torch.sqrt(1 - ab_next) * noise_pred
+        z_new = torch.sqrt(ab_next) * pred_x0 + dir_zt
+
+        z = observed_mask[:, :, None, None] * stacked_latents + \
+            missing_mask[:, :, None, None] * z_new
+
+    return z
+
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -177,27 +238,35 @@ def main():
     mean_latents_global = {k: torch.cat(v, dim=0).mean(dim=0, keepdim=True).to(DEVICE)
                            for k, v in mean_latents_global.items()}
 
-    # Evaluation scenarios: (missing_sensors, use_imputation)
+    GUIDANCE_SCALE = 1.0
+
+    # Evaluation scenarios: (missing_sensors, mode)
+    # mode: "real" | "diff" | "guided" | "mean"
     scenarios = {
-        "all_real":             ([], True),
-        "phone_acc+diff":       (["phone_acc"], True),
-        "phone_acc+mean":       (["phone_acc"], False),
-        "watch_acc+diff":       (["watch_acc"], True),
-        "watch_acc+mean":       (["watch_acc"], False),
-        "glasses_acc+diff":     (["glasses_acc"], True),
-        "glasses_acc+mean":     (["glasses_acc"], False),
-        "phone_all+diff":       (["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"], True),
-        "phone_all+mean":       (["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"], False),
-        "watch_all+diff":       (["watch_acc", "watch_gyro"], True),
-        "watch_all+mean":       (["watch_acc", "watch_gyro"], False),
+        "all_real":               ([], "real"),
+        "phone_acc+diff":         (["phone_acc"], "diff"),
+        "phone_acc+guided":       (["phone_acc"], "guided"),
+        "phone_acc+mean":         (["phone_acc"], "mean"),
+        "watch_acc+diff":         (["watch_acc"], "diff"),
+        "watch_acc+guided":       (["watch_acc"], "guided"),
+        "watch_acc+mean":         (["watch_acc"], "mean"),
+        "glasses_acc+diff":       (["glasses_acc"], "diff"),
+        "glasses_acc+guided":     (["glasses_acc"], "guided"),
+        "glasses_acc+mean":       (["glasses_acc"], "mean"),
+        "phone_all+diff":         (["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"], "diff"),
+        "phone_all+guided":       (["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"], "guided"),
+        "phone_all+mean":         (["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"], "mean"),
+        "watch_all+diff":         (["watch_acc", "watch_gyro"], "diff"),
+        "watch_all+guided":       (["watch_acc", "watch_gyro"], "guided"),
+        "watch_all+mean":         (["watch_acc", "watch_gyro"], "mean"),
     }
 
     results = {}
 
-    for scenario_name, (missing_sensors, use_imputation) in scenarios.items():
+    for scenario_name, (missing_sensors, mode) in scenarios.items():
         print(f"\n{'='*70}")
-        print(f"Scenario: {scenario_name}")
-        print(f"Missing: {missing_sensors if missing_sensors else 'None'} | Impute: {use_imputation}")
+        print(f"Scenario: {scenario_name} | Mode: {mode}")
+        print(f"Missing: {missing_sensors if missing_sensors else 'None'}")
         print(f"{'='*70}")
 
         all_preds = []
@@ -213,10 +282,9 @@ def main():
                 outputs = vae(sensor_data)
                 latents = {k: outputs[k]["mu"] for k in SENSOR_NAMES}
 
-            if not missing_sensors:
+            if mode == "real":
                 final_latents = latents
-            elif use_imputation:
-                # Normalize
+            elif mode in ("diff", "guided"):
                 latents_norm = {}
                 for name in SENSOR_NAMES:
                     mean = norm_stats[name]["mean"].to(DEVICE)
@@ -229,14 +297,22 @@ def main():
                 for sensor in missing_sensors:
                     observed_mask[:, SENSOR_NAMES.index(sensor)] = 0.0
 
-                imputed = ddim_sample_v2(diffusion, stacked, observed_mask, sched["alpha_bar"], T_diff, DDIM_STEPS)
+                if mode == "diff":
+                    imputed = ddim_sample_v2(diffusion, stacked, observed_mask,
+                                             sched["alpha_bar"], T_diff, DDIM_STEPS)
+                else:
+                    imputed = ddim_sample_v2_guided(diffusion, classifier, stacked,
+                                                    observed_mask, sched["alpha_bar"],
+                                                    T_diff, SENSOR_NAMES, norm_stats,
+                                                    DDIM_STEPS, GUIDANCE_SCALE)
+
                 final_latents = {}
                 for i, name in enumerate(SENSOR_NAMES):
                     mean = norm_stats[name]["mean"].to(DEVICE)
                     std = norm_stats[name]["std"].to(DEVICE)
                     final_latents[name] = imputed[:, i] * std + mean
             else:
-                # Mean-fill baseline: replace missing with global mean latent
+                # Mean-fill baseline
                 final_latents = dict(latents)
                 for name in missing_sensors:
                     final_latents[name] = mean_latents_global[name].expand(B, -1, -1)
@@ -260,7 +336,7 @@ def main():
 
     # Summary
     print(f"\n{'='*70}")
-    print("BEHAVIORAL ACTIVITIES - SUMMARY (diff = diffusion imputation, mean = mean-fill)")
+    print(f"BEHAVIORAL ACTIVITIES - SUMMARY (guidance_scale={GUIDANCE_SCALE})")
     print(f"{'='*70}")
     print(f"\n{'Scenario':<25} {'Accuracy':<12} {'Macro F1':<12}")
     print("-" * 50)
