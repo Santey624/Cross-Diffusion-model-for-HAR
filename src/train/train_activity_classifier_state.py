@@ -55,7 +55,7 @@ def main():
         p.requires_grad = False
 
     # Create classifier
-    classifier = create_activity_classifier(n_classes=n_classes, hidden_dims=[HIDDEN_DIM, 256, 128]).to(DEVICE)
+    classifier = create_activity_classifier(model_type="transformer", n_classes=n_classes).to(DEVICE)
     n_params = sum(p.numel() for p in classifier.parameters())
     print(f"Classifier params: {n_params/1e6:.2f}M")
 
@@ -110,7 +110,7 @@ def main():
                 "epoch": epoch,
                 "model_state": classifier.state_dict(),
                 "accuracy": acc,
-                "config": {"hidden_dims": [HIDDEN_DIM, 256, 128], "n_classes": n_classes},
+                "config": {"model_type": "transformer", "n_classes": n_classes},
             }, OUT_DIR / "best_model.pt")
 
         if epoch % 10 == 0 or epoch == 1:

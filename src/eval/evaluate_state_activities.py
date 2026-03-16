@@ -215,9 +215,10 @@ def main():
         return
 
     classifier_ckpt = torch.load(CLASSIFIER_CHECKPOINT, map_location=DEVICE)
+    model_type = classifier_ckpt.get("model_type", classifier_ckpt.get("config", {}).get("model_type", "transformer"))
     classifier = create_activity_classifier(
+        model_type=model_type,
         n_classes=test_dataset.n_classes,
-        hidden_dims=classifier_ckpt["config"]["hidden_dims"],
     ).to(DEVICE)
     classifier.load_state_dict(classifier_ckpt["model_state"])
     classifier.eval()

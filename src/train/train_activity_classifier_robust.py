@@ -24,7 +24,7 @@ from src.data.sensor_normalizer import SensorNormalizer
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 VAE_CHECKPOINT = "checkpoints/sensor_vae_combined_best.pt"
-DIFFUSION_DIR = Path("checkpoints/sensor_diffusion")
+DIFFUSION_DIR = Path("checkpoints/sensor_diffusion_v2_pretrain")
 NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
 
 DATA_ROOTS = {
@@ -37,7 +37,7 @@ OUT_DIR = Path("checkpoints/activity_classifier_robust")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Model
-MODEL_TYPE = "mlp"
+MODEL_TYPE = "transformer"
 HIDDEN_DIMS = [512, 256, 128]
 DROPOUT = 0.3
 
