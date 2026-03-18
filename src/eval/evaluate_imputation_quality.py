@@ -1,6 +1,6 @@
 # ============================================================
 # Evaluate Imputation Quality: Diffusion vs Mean vs Zero
-# Measures MSE and Cosine Similarity in latent space
+# Measures MSE, Cosine Similarity, and FFT-MSE in latent space
 # ============================================================
 
 from pathlib import Path
@@ -78,10 +78,17 @@ def ddim_sample_v2(model, stacked_latents, observed_mask, alpha_bar, T, ddim_ste
     return z
 
 
+def fft_mse(pred, target):
+    """MSE in frequency domain (magnitude spectrum along time axis)."""
+    pred_fft = torch.fft.rfft(pred, dim=-1).abs()
+    target_fft = torch.fft.rfft(target, dim=-1).abs()
+    return F.mse_loss(pred_fft, target_fft).item()
+
+
 def main():
     print(f"\n{'='*70}")
     print("IMPUTATION QUALITY EVALUATION")
-    print("Metrics: MSE and Cosine Similarity (real vs imputed latents)")
+    print("Metrics: MSE, Cosine Similarity, FFT-MSE (real vs imputed latents)")
     print(f"{'='*70}\n")
 
     normalizer = SensorNormalizer.load(NORMALIZER_PATH)
@@ -136,6 +143,7 @@ def main():
 
         mse_diff = mse_mean = mse_zero = 0.0
         cos_diff = cos_mean = cos_zero = 0.0
+        fft_diff = fft_mean = fft_zero = 0.0
         n_total = 0
 
         with torch.no_grad():
@@ -185,6 +193,11 @@ def main():
                     cos_mean += F.cosine_similarity(imp_mean.flatten(1), r_flat).mean().item()
                     cos_zero += F.cosine_similarity(imp_zero.flatten(1), r_flat).mean().item()
 
+                    # FFT-MSE: distance in frequency domain (magnitude spectrum)
+                    fft_diff += fft_mse(imp_diff, real)
+                    fft_mean += fft_mse(imp_mean, real)
+                    fft_zero += fft_mse(imp_zero, real)
+
                     n_total += 1
 
         n = n_total / len(missing_sensors) * len(test_loader)  # normalize per sensor per batch
@@ -196,10 +209,14 @@ def main():
             "cos_diff": cos_diff / n_s,
             "cos_mean": cos_mean / n_s,
             "cos_zero": cos_zero / n_s,
+            "fft_diff": fft_diff / n_s,
+            "fft_mean": fft_mean / n_s,
+            "fft_zero": fft_zero / n_s,
         }
         r = results[pattern_name]
         print(f"  MSE  — Diff: {r['mse_diff']:.4f} | Mean: {r['mse_mean']:.4f} | Zero: {r['mse_zero']:.4f}")
         print(f"  CoSim— Diff: {r['cos_diff']:.4f} | Mean: {r['cos_mean']:.4f} | Zero: {r['cos_zero']:.4f}")
+        print(f"  FFT  — Diff: {r['fft_diff']:.4f} | Mean: {r['fft_mean']:.4f} | Zero: {r['fft_zero']:.4f}")
 
     print(f"\n{'='*70}")
     print("SUMMARY — MSE (lower=better)")
@@ -220,6 +237,16 @@ def main():
         best = max(r['cos_diff'], r['cos_mean'], r['cos_zero'])
         winner = "Diff" if best == r['cos_diff'] else ("Mean" if best == r['cos_mean'] else "Zero")
         print(f"{name:<15} {r['cos_diff']:>10.4f} {r['cos_mean']:>10.4f} {r['cos_zero']:>10.4f} {winner:>10}")
+
+    print(f"\n{'='*70}")
+    print("SUMMARY — FFT-MSE (lower=better, frequency domain)")
+    print(f"{'='*70}")
+    print(f"{'Pattern':<15} {'FFT Diff':>10} {'FFT Mean':>10} {'FFT Zero':>10} {'Winner':>10}")
+    print("-" * 60)
+    for name, r in results.items():
+        best = min(r['fft_diff'], r['fft_mean'], r['fft_zero'])
+        winner = "Diff" if best == r['fft_diff'] else ("Mean" if best == r['fft_mean'] else "Zero")
+        print(f"{name:<15} {r['fft_diff']:>10.4f} {r['fft_mean']:>10.4f} {r['fft_zero']:>10.4f} {winner:>10}")
 
     print(f"\n{'='*70}\n")
 

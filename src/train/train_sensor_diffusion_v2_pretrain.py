@@ -47,6 +47,8 @@ WEIGHT_DECAY = 1e-4
 GRAD_CLIP = 1.0
 USE_AMP = True
 MIN_SNR_GAMMA = 5.0
+RECON_LOSS_WEIGHT = 0.1  # Weight for auxiliary reconstruction loss on pred_x0
+FFT_LOSS_WEIGHT = 0.05   # Weight for frequency-domain loss on pred_x0
 
 # Phase 1: Pre-train on WISDM + CogAge
 PRETRAIN_EPOCHS = 300
@@ -56,7 +58,7 @@ FINETUNE_EPOCHS = 200
 FINETUNE_LR = 5e-5
 
 # Masking
-MASK_MIN = 0
+MASK_MIN = 1
 MASK_MAX = 6
 
 
@@ -166,7 +168,23 @@ def train_epoch(model, loader, opt, scaler, sched, epoch, total_epochs,
 
             snr_t = snr[t]
             weight = torch.clamp(snr_t, max=MIN_SNR_GAMMA) / snr_t
-            loss = (weight * per_sample_loss).mean()
+            noise_loss = (weight * per_sample_loss).mean()
+
+            # Auxiliary reconstruction loss: supervise pred_x0 directly on missing sensors
+            ab_t = sched["alpha_bar"][t].view(-1, 1, 1, 1).to(device)
+            pred_x0 = (z_t - torch.sqrt(1 - ab_t) * noise_pred) / torch.sqrt(ab_t)
+            recon_err = ((pred_x0 - z0) ** 2 * missing_mask[:, :, None, None])
+            recon_loss = recon_err.sum(dim=(1, 2, 3)) / (n_missing_per_sample.squeeze() * D * T_shared)
+            recon_loss = recon_loss.mean()
+
+            # FFT loss: match frequency spectrum of pred_x0 to real x0 on missing sensors
+            pred_fft = torch.fft.rfft(pred_x0, dim=-1).abs()
+            real_fft = torch.fft.rfft(z0, dim=-1).abs()
+            fft_err = ((pred_fft - real_fft) ** 2 * missing_mask[:, :, None, None])
+            fft_loss = fft_err.sum(dim=(1, 2, 3)) / (n_missing_per_sample.squeeze() * D * (T_shared // 2 + 1))
+            fft_loss = fft_loss.mean()
+
+            loss = noise_loss + RECON_LOSS_WEIGHT * recon_loss + FFT_LOSS_WEIGHT * fft_loss
 
         scaler.scale(loss).backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
