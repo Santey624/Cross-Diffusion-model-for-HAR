@@ -14,6 +14,7 @@ from sklearn.metrics import accuracy_score, f1_score, classification_report
 
 from src.models.sensor_vae import SensorMultiModalVAE, SENSOR_NAMES
 from src.models.sensor_joint_diffusion_v2 import create_sensor_diffusion_v2
+from src.models.sensor_conditional_diffusion_v3 import create_sensor_diffusion_v3
 from src.models.activity_classifier import create_activity_classifier
 from src.data.cogage_labeled_dataset import CogAgeLabeledDataset
 from src.data.sensor_normalizer import SensorNormalizer
@@ -190,19 +191,24 @@ def main():
     vae.eval()
 
     # Load Diffusion V2
-    print("Loading Diffusion V2...")
+    version = diff_ckpt_version
+    print(f"Loading Diffusion {version}...")
     diff_ckpt = torch.load(DIFFUSION_DIR / "best_model.pt", map_location=DEVICE)
     T_diff = diff_ckpt["T"]
     cfg = diff_ckpt["config"]
-    diffusion = create_sensor_diffusion_v2(
-        d_model=cfg["d_model"],
-        num_heads=cfg["num_heads"],
-        num_blocks=cfg["num_blocks"],
-        dropout=0.0,
-    ).to(DEVICE)
+    if version == "v3":
+        diffusion = create_sensor_diffusion_v3(
+            d_model=cfg["d_model"], num_heads=cfg["num_heads"],
+            num_blocks=cfg["num_blocks"], dropout=0.0,
+        ).to(DEVICE)
+    else:
+        diffusion = create_sensor_diffusion_v2(
+            d_model=cfg["d_model"], num_heads=cfg["num_heads"],
+            num_blocks=cfg["num_blocks"], dropout=0.0,
+        ).to(DEVICE)
     diffusion.load_state_dict(diff_ckpt["model_state"])
     diffusion.eval()
-    print(f"Diffusion: epoch {diff_ckpt.get('epoch', '?')}, loss={diff_ckpt.get('loss', '?'):.4f}")
+    print(f"Diffusion {version}: epoch {diff_ckpt.get('epoch', '?')}, loss={diff_ckpt.get('loss', '?'):.4f}")
 
     norm_stats = torch.load(DIFFUSION_DIR / "normalization_stats.pt", map_location=DEVICE)
     sched = make_schedule(T_diff, diff_ckpt["schedule"])
@@ -358,4 +364,9 @@ if __name__ == "__main__":
     import sys
     if "--robust" in sys.argv:
         CLASSIFIER_CHECKPOINT = "checkpoints/activity_classifier_state_robust/best_model.pt"
+    if "--v3" in sys.argv:
+        DIFFUSION_DIR = Path("checkpoints/sensor_diffusion_v3")
+        diff_ckpt_version = "v3"
+    else:
+        diff_ckpt_version = "v2"
     main()

@@ -13,6 +13,7 @@ import numpy as np
 
 from src.models.sensor_vae import SensorMultiModalVAE, SENSOR_NAMES
 from src.models.sensor_joint_diffusion_v2 import create_sensor_diffusion_v2
+from src.models.sensor_conditional_diffusion_v3 import create_sensor_diffusion_v3
 from src.data.cogage_labeled_dataset import get_combined_labeled_dataset
 from src.data.sensor_normalizer import SensorNormalizer
 
@@ -101,14 +102,22 @@ def main():
     vae.load_state_dict(torch.load(VAE_CHECKPOINT, map_location=DEVICE)["model_state"])
     vae.eval()
 
-    # Load Diffusion
+    # Load Diffusion (V2 or V3)
     diff_ckpt = torch.load(DIFFUSION_DIR / "best_model.pt", map_location=DEVICE)
     T_diff = diff_ckpt["T"]
     cfg = diff_ckpt["config"]
-    diffusion = create_sensor_diffusion_v2(
-        d_model=cfg["d_model"], num_heads=cfg["num_heads"],
-        num_blocks=cfg["num_blocks"], dropout=0.0,
-    ).to(DEVICE)
+    if diff_ckpt.get("version", "v2") == "v3_conditional":
+        diffusion = create_sensor_diffusion_v3(
+            d_model=cfg["d_model"], num_heads=cfg["num_heads"],
+            num_blocks=cfg["num_blocks"], dropout=0.0,
+        ).to(DEVICE)
+        print("Using Conditional Diffusion V3")
+    else:
+        diffusion = create_sensor_diffusion_v2(
+            d_model=cfg["d_model"], num_heads=cfg["num_heads"],
+            num_blocks=cfg["num_blocks"], dropout=0.0,
+        ).to(DEVICE)
+        print("Using Diffusion V2")
     diffusion.load_state_dict(diff_ckpt["model_state"])
     diffusion.eval()
 
@@ -252,4 +261,7 @@ def main():
 
 
 if __name__ == "__main__":
+    import sys
+    if "--v3" in sys.argv:
+        DIFFUSION_DIR = Path("checkpoints/sensor_diffusion_v3")
     main()
