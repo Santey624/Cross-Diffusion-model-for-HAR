@@ -173,7 +173,7 @@ def main():
                     # Mean imputed (normalized)
                     imp_mean = (mean_latents[name].expand(B, -1, -1) - mean_n) / std_n
                     # Zero imputed (normalized: (0 - mean) / std)
-                    imp_zero = (-mean_n / std_n).expand(B, -1, -1)
+                    imp_zero = (-mean_n / std_n).expand(B, -1, real.shape[-1])
 
                     mse_diff += F.mse_loss(imp_diff, real).item()
                     mse_mean += F.mse_loss(imp_mean, real).item()
