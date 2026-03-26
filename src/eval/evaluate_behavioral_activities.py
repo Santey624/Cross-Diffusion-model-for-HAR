@@ -355,16 +355,63 @@ def main():
         print(f"\nAccuracy: {acc:.4f}")
         print(f"Macro F1: {f1_macro:.4f}")
 
-    # Summary
-    print(f"\n{'='*70}")
-    print(f"BEHAVIORAL ACTIVITIES - SUMMARY (guidance_scale={GUIDANCE_SCALE})")
-    print(f"{'='*70}")
-    print(f"\n{'Scenario':<25} {'Accuracy':<12} {'Macro F1':<12}")
-    print("-" * 50)
-    for name, metrics in results.items():
-        print(f"{name:<25} {metrics['accuracy']:<12.4f} {metrics['f1_macro']:<12.4f}")
+    # ============================================================
+    # Summary: grouped by pattern — Present vs Diff vs Mean vs Zero
+    # ============================================================
+    present_acc = results.get("all_real", {}).get("accuracy", 0)
+    present_f1  = results.get("all_real", {}).get("f1_macro", 0)
 
-    print(f"\n{'='*70}\n")
+    pattern_groups = [
+        "phone_acc", "watch_acc", "glasses_acc",
+        "phone_all", "watch_all",
+        "only_watch", "only_phone",
+    ]
+
+    print(f"\n{'='*100}")
+    print(f"BEHAVIORAL ACTIVITIES — COMPARISON BY PATTERN (guidance_scale={GUIDANCE_SCALE})")
+    print(f"{'='*100}")
+    print(f"  {'Pattern':<14} {'Present':>8} {'Diffusion':>10} {'Mean-Fill':>10} {'Zero-Fill':>10}"
+          f"   {'ΔDiff':>7} {'ΔMean':>7} {'ΔZero':>7}   {'Winner'}")
+    print("  " + "-" * 90)
+    print(f"  {'all_real':<14} {present_acc:>7.1%}")
+
+    for pat in pattern_groups:
+        diff = results.get(f"{pat}+diff")
+        mean = results.get(f"{pat}+mean")
+        zero = results.get(f"{pat}+zero")
+
+        diff_acc = diff["accuracy"] if diff else None
+        mean_acc = mean["accuracy"] if mean else None
+        zero_acc = zero["accuracy"] if zero else None
+
+        fmt = lambda v: f"{v:>9.1%}" if v is not None else f"{'—':>9}"
+        dfmt = lambda v: f"{v:>+7.1%}" if v is not None else f"{'—':>7}"
+
+        candidates = {k: v for k, v in
+                      [("Diff", diff_acc), ("Mean", mean_acc), ("Zero", zero_acc)]
+                      if v is not None}
+        winner = max(candidates, key=candidates.get) if candidates else "—"
+        winner_str = f"→ {winner}"
+
+        print(f"  {pat:<14} {present_acc:>8.1%}"
+              f" {fmt(diff_acc)} {fmt(mean_acc)} {fmt(zero_acc)}"
+              f"   {dfmt(diff_acc - present_acc if diff_acc else None)}"
+              f" {dfmt(mean_acc - present_acc if mean_acc else None)}"
+              f" {dfmt(zero_acc - present_acc if zero_acc else None)}"
+              f"   {winner_str}")
+
+    print(f"\n  {'Pattern':<14} {'Present':>8} {'Diffusion':>10} {'Mean-Fill':>10} {'Zero-Fill':>10}"
+          f"   (Macro F1)")
+    print("  " + "-" * 70)
+    print(f"  {'all_real':<14} {present_f1:>8.4f}")
+    for pat in pattern_groups:
+        diff = results.get(f"{pat}+diff")
+        mean = results.get(f"{pat}+mean")
+        zero = results.get(f"{pat}+zero")
+        fmt_f1 = lambda r: f"{r['f1_macro']:>10.4f}" if r else f"{'—':>10}"
+        print(f"  {pat:<14} {present_f1:>8.4f} {fmt_f1(diff)} {fmt_f1(mean)} {fmt_f1(zero)}")
+
+    print(f"\n{'='*100}\n")
 
 
 if __name__ == "__main__":

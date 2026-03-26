@@ -150,10 +150,12 @@ def main():
     for pattern_name, missing_sensors in patterns.items():
         print(f"\nPattern: {pattern_name} (missing: {missing_sensors})")
 
-        mse_diff = mse_mean = mse_zero = 0.0
-        cos_diff = cos_mean = cos_zero = 0.0
-        fft_diff = fft_mean = fft_zero = 0.0
-        n_total = 0
+        # Track metrics per individual sensor
+        sensor_acc = {name: {"mse_diff": 0, "mse_mean": 0, "mse_zero": 0,
+                              "fft_diff": 0, "fft_mean": 0, "fft_zero": 0,
+                              "cos_diff": 0, "cos_mean": 0, "cos_zero": 0,
+                              "n": 0}
+                      for name in missing_sensors}
 
         with torch.no_grad():
             for batch in tqdm(test_loader, desc=pattern_name, leave=False):
@@ -178,86 +180,88 @@ def main():
                 imputed = ddim_sample_v2(diffusion, stacked, observed_mask,
                                          sched["alpha_bar"], T_diff, DDIM_STEPS)
 
-                # Evaluate only on missing sensors
+                # Evaluate per missing sensor individually
                 for name in missing_sensors:
                     idx = SENSOR_NAMES.index(name)
                     real = latents_norm[name]  # (B, D, T)
                     mean_n = norm_stats[name]["mean"].to(DEVICE)
                     std_n = norm_stats[name]["std"].to(DEVICE)
 
-                    # Diffusion imputed (normalized)
                     imp_diff = imputed[:, idx]
-                    # Mean imputed (normalized)
                     imp_mean = (mean_latents[name].expand(B, -1, -1) - mean_n) / std_n
-                    # Zero imputed (normalized: (0 - mean) / std)
                     imp_zero = (-mean_n / std_n).expand(B, -1, real.shape[-1])
 
-                    mse_diff += F.mse_loss(imp_diff, real).item()
-                    mse_mean += F.mse_loss(imp_mean, real).item()
-                    mse_zero += F.mse_loss(imp_zero, real).item()
+                    sensor_acc[name]["mse_diff"] += F.mse_loss(imp_diff, real).item()
+                    sensor_acc[name]["mse_mean"] += F.mse_loss(imp_mean, real).item()
+                    sensor_acc[name]["mse_zero"] += F.mse_loss(imp_zero, real).item()
 
-                    # Cosine similarity (flatten D*T)
                     r_flat = real.flatten(1)
-                    cos_diff += F.cosine_similarity(imp_diff.flatten(1), r_flat).mean().item()
-                    cos_mean += F.cosine_similarity(imp_mean.flatten(1), r_flat).mean().item()
-                    cos_zero += F.cosine_similarity(imp_zero.flatten(1), r_flat).mean().item()
+                    sensor_acc[name]["cos_diff"] += F.cosine_similarity(imp_diff.flatten(1), r_flat).mean().item()
+                    sensor_acc[name]["cos_mean"] += F.cosine_similarity(imp_mean.flatten(1), r_flat).mean().item()
+                    sensor_acc[name]["cos_zero"] += F.cosine_similarity(imp_zero.flatten(1), r_flat).mean().item()
 
-                    # FFT-MSE: distance in frequency domain (magnitude spectrum)
-                    fft_diff += fft_mse(imp_diff, real)
-                    fft_mean += fft_mse(imp_mean, real)
-                    fft_zero += fft_mse(imp_zero, real)
+                    sensor_acc[name]["fft_diff"] += fft_mse(imp_diff, real)
+                    sensor_acc[name]["fft_mean"] += fft_mse(imp_mean, real)
+                    sensor_acc[name]["fft_zero"] += fft_mse(imp_zero, real)
 
-                    n_total += 1
+                    sensor_acc[name]["n"] += 1
 
-        n = n_total / len(missing_sensors) * len(test_loader)  # normalize per sensor per batch
-        n_s = len(missing_sensors) * len(test_loader)
-        results[pattern_name] = {
-            "mse_diff": mse_diff / n_s,
-            "mse_mean": mse_mean / n_s,
-            "mse_zero": mse_zero / n_s,
-            "cos_diff": cos_diff / n_s,
-            "cos_mean": cos_mean / n_s,
-            "cos_zero": cos_zero / n_s,
-            "fft_diff": fft_diff / n_s,
-            "fft_mean": fft_mean / n_s,
-            "fft_zero": fft_zero / n_s,
-        }
-        r = results[pattern_name]
-        print(f"  MSE  — Diff: {r['mse_diff']:.4f} | Mean: {r['mse_mean']:.4f} | Zero: {r['mse_zero']:.4f}")
-        print(f"  CoSim— Diff: {r['cos_diff']:.4f} | Mean: {r['cos_mean']:.4f} | Zero: {r['cos_zero']:.4f}")
-        print(f"  FFT  — Diff: {r['fft_diff']:.4f} | Mean: {r['fft_mean']:.4f} | Zero: {r['fft_zero']:.4f}")
+        # Normalize by number of batches per sensor
+        results[pattern_name] = {}
+        for name in missing_sensors:
+            n = max(sensor_acc[name]["n"], 1)
+            results[pattern_name][name] = {k: v / n for k, v in sensor_acc[name].items() if k != "n"}
 
-    print(f"\n{'='*70}")
-    print("SUMMARY — MSE (lower=better)")
-    print(f"{'='*70}")
-    print(f"{'Pattern':<15} {'MSE Diff':>10} {'MSE Mean':>10} {'MSE Zero':>10} {'Winner':>10}")
-    print("-" * 60)
-    for name, r in results.items():
-        best = min(r['mse_diff'], r['mse_mean'], r['mse_zero'])
-        winner = "Diff" if best == r['mse_diff'] else ("Mean" if best == r['mse_mean'] else "Zero")
-        print(f"{name:<15} {r['mse_diff']:>10.4f} {r['mse_mean']:>10.4f} {r['mse_zero']:>10.4f} {winner:>10}")
+    # ============================================================
+    # SUMMARY — Per-Sensor: Euclidean vs Fourier comparison
+    # ============================================================
+    print(f"\n\n{'='*110}")
+    print("IMPUTATION QUALITY — Per-Sensor: Euclidean MSE vs FFT-MSE (Fourier)")
+    print(f"{'='*110}")
 
-    print(f"\n{'='*70}")
-    print("SUMMARY — Cosine Similarity (higher=better)")
-    print(f"{'='*70}")
-    print(f"{'Pattern':<15} {'CoS Diff':>10} {'CoS Mean':>10} {'CoS Zero':>10} {'Winner':>10}")
-    print("-" * 60)
-    for name, r in results.items():
-        best = max(r['cos_diff'], r['cos_mean'], r['cos_zero'])
-        winner = "Diff" if best == r['cos_diff'] else ("Mean" if best == r['cos_mean'] else "Zero")
-        print(f"{name:<15} {r['cos_diff']:>10.4f} {r['cos_mean']:>10.4f} {r['cos_zero']:>10.4f} {winner:>10}")
+    for pattern_name, sensor_data in results.items():
+        missing = patterns[pattern_name]
+        print(f"\nPattern: {pattern_name}  |  Missing sensors: {missing}")
+        hdr = (f"  {'Sensor':<14}"
+               f" {'EucDiff':>9} {'EucMean':>9} {'EucZero':>9} {'Best(Euc)':>10}"
+               f" | {'FFTDiff':>9} {'FFTMean':>9} {'FFTZero':>9} {'Best(FFT)':>10}"
+               f" | {'CosDiff':>8} {'CosMean':>8}")
+        print(hdr)
+        print("  " + "-" * (len(hdr) - 2))
+        for sensor, m in sensor_data.items():
+            euc_best_val = min(m["mse_diff"], m["mse_mean"], m["mse_zero"])
+            fft_best_val = min(m["fft_diff"], m["fft_mean"], m["fft_zero"])
+            euc_best = ("Diff" if euc_best_val == m["mse_diff"]
+                        else "Mean" if euc_best_val == m["mse_mean"] else "Zero")
+            fft_best = ("Diff" if fft_best_val == m["fft_diff"]
+                        else "Mean" if fft_best_val == m["fft_mean"] else "Zero")
+            print(f"  {sensor:<14}"
+                  f" {m['mse_diff']:>9.4f} {m['mse_mean']:>9.4f} {m['mse_zero']:>9.4f} {euc_best:>10}"
+                  f" | {m['fft_diff']:>9.4f} {m['fft_mean']:>9.4f} {m['fft_zero']:>9.4f} {fft_best:>10}"
+                  f" | {m['cos_diff']:>8.4f} {m['cos_mean']:>8.4f}")
 
-    print(f"\n{'='*70}")
-    print("SUMMARY — FFT-MSE (lower=better, frequency domain)")
-    print(f"{'='*70}")
-    print(f"{'Pattern':<15} {'FFT Diff':>10} {'FFT Mean':>10} {'FFT Zero':>10} {'Winner':>10}")
-    print("-" * 60)
-    for name, r in results.items():
-        best = min(r['fft_diff'], r['fft_mean'], r['fft_zero'])
-        winner = "Diff" if best == r['fft_diff'] else ("Mean" if best == r['fft_mean'] else "Zero")
-        print(f"{name:<15} {r['fft_diff']:>10.4f} {r['fft_mean']:>10.4f} {r['fft_zero']:>10.4f} {winner:>10}")
-
-    print(f"\n{'='*70}\n")
+    # ============================================================
+    # AGGREGATE SUMMARY — Count wins per method
+    # ============================================================
+    print(f"\n\n{'='*60}")
+    print("AGGREGATE WINS (across all sensors and patterns)")
+    print(f"{'='*60}")
+    euc_wins = {"Diff": 0, "Mean": 0, "Zero": 0}
+    fft_wins = {"Diff": 0, "Mean": 0, "Zero": 0}
+    for sensor_data in results.values():
+        for m in sensor_data.values():
+            euc_best_val = min(m["mse_diff"], m["mse_mean"], m["mse_zero"])
+            fft_best_val = min(m["fft_diff"], m["fft_mean"], m["fft_zero"])
+            euc_best = ("Diff" if euc_best_val == m["mse_diff"]
+                        else "Mean" if euc_best_val == m["mse_mean"] else "Zero")
+            fft_best = ("Diff" if fft_best_val == m["fft_diff"]
+                        else "Mean" if fft_best_val == m["fft_mean"] else "Zero")
+            euc_wins[euc_best] += 1
+            fft_wins[fft_best] += 1
+    total = sum(euc_wins.values())
+    print(f"  Euclidean MSE wins: Diff={euc_wins['Diff']}/{total}  Mean={euc_wins['Mean']}/{total}  Zero={euc_wins['Zero']}/{total}")
+    print(f"  FFT-MSE wins:       Diff={fft_wins['Diff']}/{total}  Mean={fft_wins['Mean']}/{total}  Zero={fft_wins['Zero']}/{total}")
+    print(f"{'='*60}\n")
 
 
 if __name__ == "__main__":
