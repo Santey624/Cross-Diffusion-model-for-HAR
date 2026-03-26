@@ -414,6 +414,8 @@ if __name__ == "__main__":
     if "--v3" in sys.argv:
         DIFFUSION_DIR = Path("checkpoints/sensor_diffusion_v3")
         diff_ckpt_version = "v3"
+        if "--robust" in sys.argv:
+            CLASSIFIER_CHECKPOINT = "checkpoints/activity_classifier_state_robust_v3/best_model.pt"
     else:
         diff_ckpt_version = "v2"
     main()

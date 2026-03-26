@@ -418,6 +418,7 @@ if __name__ == "__main__":
     import sys
     if "--v3" in sys.argv:
         DIFFUSION_DIR = Path("checkpoints/sensor_diffusion_v3")
+        CLASSIFIER_CHECKPOINT = "checkpoints/activity_classifier_robust_v3/best_model.pt"
         diff_ckpt_version = "v3"
     else:
         diff_ckpt_version = "v2"
