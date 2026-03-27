@@ -102,22 +102,25 @@ def generate_random_masks(B, K, mask_min, mask_max, device):
 
 def generate_wisdm_aware_masks(B, K, sensor_names, wisdm_real, device):
     """
-    For WISDM samples: only mask sensors that have real data.
-    Zero-filled sensors (phone_grav, phone_lacc, glasses_acc) should
-    always be marked as missing since they have no real data.
+    For WISDM samples: mark zero-filled sensors as 'observed' (mask=1)
+    so V3 cross-attention can use all 7 sensors as keys.
+
+    Zero-filled sensors (phone_grav, phone_lacc, glasses_acc) have zero
+    latent values — they act as neutral conditioning keys. Loss is NOT
+    computed on them (observed sensors are not generation targets).
+
+    Only real WISDM sensors are randomly masked as generation targets,
+    so the model learns to impute from observed context including zero-keys.
+    This ensures V3 cross-attention sees all sensor slots as potential keys
+    during pretraining, matching the CogAge fine-tuning distribution.
     """
     masks = torch.ones(B, K, device=device)
 
-    # Indices of zero-filled sensors
-    zero_indices = [i for i, name in enumerate(sensor_names) if name not in wisdm_real]
     real_indices = [i for i, name in enumerate(sensor_names) if name in wisdm_real]
 
     for i in range(B):
-        # Zero-filled sensors are always "missing"
-        for idx in zero_indices:
-            masks[i, idx] = 0.0
-
-        # Additionally mask 1-2 of the real sensors
+        # Only mask 1-2 of the real WISDM sensors as generation targets
+        # Zero-filled sensors remain observed (mask=1, zero latent = neutral key)
         n_mask_real = random.randint(1, min(2, len(real_indices)))
         masked_real = random.sample(real_indices, n_mask_real)
         for idx in masked_real:
