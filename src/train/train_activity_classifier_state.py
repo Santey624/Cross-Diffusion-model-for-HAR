@@ -1,7 +1,9 @@
 # ============================================================
 # Train Activity Classifier for STATE Activities (6 classes)
+# Supports --mlp flag to train MLP instead of Transformer
 # ============================================================
 
+import sys
 from pathlib import Path
 import torch
 import torch.nn as nn
@@ -22,18 +24,20 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 STATE_ROOT = "data/cogage/python/arrays/state"
 VAE_CHECKPOINT = "checkpoints/sensor_vae_combined_best.pt"
 NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
-OUT_DIR = Path("checkpoints/activity_classifier_state")
+
+USE_MLP = "--mlp" in sys.argv
+MODEL_TYPE = "mlp" if USE_MLP else "transformer"
+OUT_DIR = Path("checkpoints/activity_classifier_state_mlp" if USE_MLP else "checkpoints/activity_classifier_state")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 BATCH_SIZE = 32
-EPOCHS = 100
+EPOCHS = 150
 LR = 1e-3
-HIDDEN_DIM = 512
 
 
 def main():
     print(f"\n{'='*60}")
-    print("Training State Activity Classifier (6 classes)")
+    print(f"Training State Activity Classifier (6 classes) — {MODEL_TYPE.upper()}")
     print(f"{'='*60}\n")
 
     normalizer = SensorNormalizer.load(NORMALIZER_PATH)
@@ -55,7 +59,14 @@ def main():
         p.requires_grad = False
 
     # Create classifier
-    classifier = create_activity_classifier(model_type="transformer", n_classes=n_classes).to(DEVICE)
+    if USE_MLP:
+        classifier = create_activity_classifier(
+            model_type="mlp", n_classes=n_classes,
+            hidden_dims=[512, 256, 128], dropout=0.3,
+        ).to(DEVICE)
+    else:
+        classifier = create_activity_classifier(model_type="transformer", n_classes=n_classes).to(DEVICE)
+
     n_params = sum(p.numel() for p in classifier.parameters())
     print(f"Classifier params: {n_params/1e6:.2f}M")
 
@@ -110,7 +121,7 @@ def main():
                 "epoch": epoch,
                 "model_state": classifier.state_dict(),
                 "accuracy": acc,
-                "config": {"model_type": "transformer", "n_classes": n_classes},
+                "config": {"model_type": MODEL_TYPE, "n_classes": n_classes},
             }, OUT_DIR / "best_model.pt")
 
         if epoch % 10 == 0 or epoch == 1:

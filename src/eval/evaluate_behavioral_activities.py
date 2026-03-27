@@ -215,7 +215,7 @@ def main():
     norm_stats = torch.load(DIFFUSION_DIR / "normalization_stats.pt", map_location=DEVICE)
     sched = make_schedule(T_diff, diff_ckpt["schedule"])
 
-    # Load classifier
+    # Load classifier (Robust Transformer)
     print("\nLoading activity classifier...")
     if not Path(CLASSIFIER_CHECKPOINT).exists():
         print(f"Classifier not found at {CLASSIFIER_CHECKPOINT}")
@@ -224,13 +224,30 @@ def main():
 
     classifier_ckpt = torch.load(CLASSIFIER_CHECKPOINT, map_location=DEVICE)
     model_type = classifier_ckpt.get("model_type", "mlp")
+    clf_cfg = classifier_ckpt.get("classifier_config", {})
     classifier = create_activity_classifier(
         model_type=model_type,
         n_classes=n_classes,
+        **clf_cfg,
     ).to(DEVICE)
     classifier.load_state_dict(classifier_ckpt["model_state"])
     classifier.eval()
     print(f"Classifier: {n_classes} classes")
+
+    # Load MLP classifier for comparison (optional)
+    MLP_CHECKPOINT = "checkpoints/activity_classifier/best_model.pt"
+    mlp_classifier = None
+    if Path(MLP_CHECKPOINT).exists():
+        mlp_ckpt = torch.load(MLP_CHECKPOINT, map_location=DEVICE)
+        mlp_classifier = create_activity_classifier(
+            model_type="mlp", n_classes=n_classes,
+            hidden_dims=[512, 256, 128], dropout=0.0,
+        ).to(DEVICE)
+        mlp_classifier.load_state_dict(mlp_ckpt["model_state"])
+        mlp_classifier.eval()
+        print(f"MLP Classifier loaded: {MLP_CHECKPOINT}")
+    else:
+        print(f"MLP Classifier not found at {MLP_CHECKPOINT} — skipping MLP comparison")
 
     # Compute global mean latents for mean-fill baseline (from test set)
     print("\nComputing mean latents for mean-fill baseline...")
@@ -356,6 +373,42 @@ def main():
         print(f"Macro F1: {f1_macro:.4f}")
 
     # ============================================================
+    # MLP Classifier eval: zero-fill for all missing patterns
+    # ============================================================
+    mlp_results = {}
+    if mlp_classifier is not None:
+        print("\nRunning MLP classifier comparison (zero-fill for missing sensors)...")
+        mlp_patterns = {
+            "all_real":    [],
+            "phone_acc":   ["phone_acc"],
+            "watch_acc":   ["watch_acc"],
+            "glasses_acc": ["glasses_acc"],
+            "phone_all":   ["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"],
+            "watch_all":   ["watch_acc", "watch_gyro"],
+            "only_watch":  ["phone_acc", "phone_gyro", "phone_grav", "phone_lacc", "glasses_acc"],
+            "only_phone":  ["watch_acc", "watch_gyro", "glasses_acc"],
+        }
+        for pat_name, missing in mlp_patterns.items():
+            all_preds, all_labels = [], []
+            for batch in test_loader:
+                sensor_data = {k: batch[k].to(DEVICE) for k in SENSOR_NAMES}
+                labels = batch["label"].to(DEVICE)
+                B = labels.size(0)
+                with torch.no_grad():
+                    outputs = vae(sensor_data)
+                    latents = {k: outputs[k]["mu"] for k in SENSOR_NAMES}
+                    final_latents = dict(latents)
+                    for name in missing:
+                        final_latents[name] = torch.zeros_like(latents[name])
+                    preds = mlp_classifier(final_latents, SENSOR_NAMES).argmax(dim=1)
+                all_preds.extend(preds.cpu().numpy())
+                all_labels.extend(labels.cpu().numpy())
+            mlp_results[pat_name] = {
+                "accuracy": accuracy_score(all_labels, all_preds),
+                "f1_macro": f1_score(all_labels, all_preds, average="macro", zero_division=0),
+            }
+
+    # ============================================================
     # Summary: grouped by pattern — Present vs Diff vs Mean vs Zero
     # ============================================================
     present_acc = results.get("all_real", {}).get("accuracy", 0)
@@ -367,51 +420,63 @@ def main():
         "only_watch", "only_phone",
     ]
 
-    print(f"\n{'='*100}")
+    has_mlp = bool(mlp_results)
+    mlp_present = mlp_results.get("all_real", {}).get("accuracy", None)
+
+    print(f"\n{'='*110}")
     print(f"BEHAVIORAL ACTIVITIES — COMPARISON BY PATTERN (guidance_scale={GUIDANCE_SCALE})")
-    print(f"{'='*100}")
-    print(f"  {'Pattern':<14} {'Present':>8} {'Diffusion':>10} {'Mean-Fill':>10} {'Zero-Fill':>10}"
-          f"   {'ΔDiff':>7} {'ΔMean':>7} {'ΔZero':>7}   {'Winner'}")
-    print("  " + "-" * 90)
-    print(f"  {'all_real':<14} {present_acc:>7.1%}")
+    print(f"{'='*110}")
+
+    hdr_mlp = f" {'MLP+Zero':>9}" if has_mlp else ""
+    print(f"  {'Pattern':<14} {'Present':>8} {'Diff(Rob)':>10} {'Mean(Rob)':>10} {'Zero(Rob)':>10}"
+          f"{hdr_mlp}   {'ΔDiff':>7} {'ΔMean':>7}   {'Winner'}")
+    print("  " + "-" * (100 + (10 if has_mlp else 0)))
+
+    mlp_str = lambda v: f" {v:>9.1%}" if v is not None else f" {'—':>9}"
+    print(f"  {'all_real':<14} {present_acc:>7.1%}{mlp_str(mlp_present) if has_mlp else ''}")
 
     for pat in pattern_groups:
         diff = results.get(f"{pat}+diff")
         mean = results.get(f"{pat}+mean")
         zero = results.get(f"{pat}+zero")
+        mlp  = mlp_results.get(pat) if has_mlp else None
 
         diff_acc = diff["accuracy"] if diff else None
         mean_acc = mean["accuracy"] if mean else None
         zero_acc = zero["accuracy"] if zero else None
+        mlp_acc  = mlp["accuracy"]  if mlp  else None
 
-        fmt = lambda v: f"{v:>9.1%}" if v is not None else f"{'—':>9}"
+        fmt  = lambda v: f"{v:>9.1%}" if v is not None else f"{'—':>9}"
         dfmt = lambda v: f"{v:>+7.1%}" if v is not None else f"{'—':>7}"
 
         candidates = {k: v for k, v in
                       [("Diff", diff_acc), ("Mean", mean_acc), ("Zero", zero_acc)]
                       if v is not None}
         winner = max(candidates, key=candidates.get) if candidates else "—"
-        winner_str = f"→ {winner}"
 
+        mlp_col = mlp_str(mlp_acc) if has_mlp else ""
         print(f"  {pat:<14} {present_acc:>8.1%}"
-              f" {fmt(diff_acc)} {fmt(mean_acc)} {fmt(zero_acc)}"
+              f" {fmt(diff_acc)} {fmt(mean_acc)} {fmt(zero_acc)}{mlp_col}"
               f"   {dfmt(diff_acc - present_acc if diff_acc else None)}"
               f" {dfmt(mean_acc - present_acc if mean_acc else None)}"
-              f" {dfmt(zero_acc - present_acc if zero_acc else None)}"
-              f"   {winner_str}")
+              f"   → {winner}")
 
-    print(f"\n  {'Pattern':<14} {'Present':>8} {'Diffusion':>10} {'Mean-Fill':>10} {'Zero-Fill':>10}"
-          f"   (Macro F1)")
+    # F1 table
+    print(f"\n  {'Pattern':<14} {'Present':>8} {'Diff(Rob)':>10} {'Mean(Rob)':>10} {'Zero(Rob)':>10}"
+          f"{' MLP+Zero':>10 if has_mlp else ''}   (Macro F1)")
     print("  " + "-" * 70)
-    print(f"  {'all_real':<14} {present_f1:>8.4f}")
+    print(f"  {'all_real':<14} {present_f1:>8.4f}" +
+          (f" {mlp_results.get('all_real',{}).get('f1_macro',0):>10.4f}  ← MLP" if has_mlp else ""))
     for pat in pattern_groups:
         diff = results.get(f"{pat}+diff")
         mean = results.get(f"{pat}+mean")
         zero = results.get(f"{pat}+zero")
+        mlp  = mlp_results.get(pat) if has_mlp else None
         fmt_f1 = lambda r: f"{r['f1_macro']:>10.4f}" if r else f"{'—':>10}"
-        print(f"  {pat:<14} {present_f1:>8.4f} {fmt_f1(diff)} {fmt_f1(mean)} {fmt_f1(zero)}")
+        mlp_f1 = f" {mlp['f1_macro']:>9.4f}" if mlp else ""
+        print(f"  {pat:<14} {present_f1:>8.4f} {fmt_f1(diff)} {fmt_f1(mean)} {fmt_f1(zero)}{mlp_f1}")
 
-    print(f"\n{'='*100}\n")
+    print(f"\n{'='*110}\n")
 
 
 if __name__ == "__main__":

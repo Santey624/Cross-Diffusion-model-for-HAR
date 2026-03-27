@@ -34,6 +34,9 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 # Model
 MODEL_TYPE = "transformer"
 DROPOUT = 0.3
+D_MODEL = 256
+N_HEADS = 8
+N_LAYERS = 4
 
 # Training
 BATCH_SIZE = 32
@@ -179,6 +182,9 @@ def main():
         model_type=MODEL_TYPE,
         n_classes=n_classes,
         dropout=DROPOUT,
+        d_model=D_MODEL,
+        n_heads=N_HEADS,
+        n_layers=N_LAYERS,
     ).to(DEVICE)
     n_params = sum(p.numel() for p in classifier.parameters())
     print(f"Classifier parameters: {n_params / 1e6:.2f}M")
@@ -287,6 +293,7 @@ def main():
                 "accuracy": test_acc,
                 "n_classes": n_classes,
                 "model_type": MODEL_TYPE,
+                "classifier_config": {"d_model": D_MODEL, "n_heads": N_HEADS, "n_layers": N_LAYERS},
                 "label_to_idx": train_ds.label_to_idx,
                 "idx_to_label": train_ds.idx_to_label,
             }, OUT_DIR / "best_model.pt")

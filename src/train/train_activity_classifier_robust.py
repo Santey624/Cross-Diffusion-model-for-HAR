@@ -41,6 +41,10 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_TYPE = "transformer"
 HIDDEN_DIMS = [512, 256, 128]
 DROPOUT = 0.3
+# Transformer size (larger than before: 128→256 d_model, 2→4 layers)
+D_MODEL = 256
+N_HEADS = 8
+N_LAYERS = 4
 
 # Training
 BATCH_SIZE = 32  # Smaller because diffusion is expensive
@@ -223,6 +227,9 @@ def main():
         model_type=MODEL_TYPE,
         n_classes=n_classes,
         dropout=DROPOUT,
+        d_model=D_MODEL,
+        n_heads=N_HEADS,
+        n_layers=N_LAYERS,
     ).to(DEVICE)
 
     n_params = sum(p.numel() for p in classifier.parameters())
@@ -340,6 +347,7 @@ def main():
                 'acc': test_acc,
                 'n_classes': n_classes,
                 'model_type': MODEL_TYPE,
+                'classifier_config': {'d_model': D_MODEL, 'n_heads': N_HEADS, 'n_layers': N_LAYERS},
                 'label_to_idx': train_dataset.label_to_idx,
                 'idx_to_label': train_dataset.idx_to_label,
             }, OUT_DIR / "best_model.pt")
