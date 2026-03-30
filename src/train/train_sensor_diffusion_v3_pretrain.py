@@ -209,7 +209,7 @@ def main():
     K = len(SENSOR_NAMES)
 
     print(f"\n{'='*70}")
-    print("Training Sensor Diffusion V2 with WISDM Pre-Training")
+    print("Training Sensor Diffusion V3 with WISDM Pre-Training")
     print(f"{'='*70}")
     print(f"Phase 1: Pre-train {PRETRAIN_EPOCHS} epochs (WISDM + CogAge)")
     print(f"Phase 2: Fine-tune {FINETUNE_EPOCHS} epochs (CogAge only)")
