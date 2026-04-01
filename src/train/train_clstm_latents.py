@@ -26,25 +26,31 @@ from src.data.sensor_normalizer import SensorNormalizer
 # ============================================================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-VAE_CHECKPOINT  = "checkpoints/sensor_vae_v2/best_model.pt"
 NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
 
 ROBUST    = "--robust" in sys.argv
 USE_STATE = "--state"  in sys.argv
+USE_V1    = "--v1"     in sys.argv   # use V1 VAE (D=8, T=32)
+
+VAE_CHECKPOINT = "checkpoints/sensor_vae_combined_best.pt" if USE_V1 \
+                 else "checkpoints/sensor_vae_v2/best_model.pt"
+
+vae_tag = "v1" if USE_V1 else "v2"
 
 if USE_STATE:
     DATA_ROOTS = {"state": "data/cogage/python/arrays/state"}
-    OUT_DIR = Path("checkpoints/clstm_latents_state_robust" if ROBUST
-                   else "checkpoints/clstm_latents_state")
+    suffix = f"state{'_robust' if ROBUST else ''}_{vae_tag}"
     EPOCHS = 150
 else:
     DATA_ROOTS = {
         "blho": "data/cogage/python/arrays/blho",
         "bbh":  "data/cogage/python/arrays/bbh",
     }
-    OUT_DIR = Path("checkpoints/clstm_latents_behavioral_robust" if ROBUST
-                   else "checkpoints/clstm_latents_behavioral")
+    suffix = f"behavioral{'_robust' if ROBUST else ''}_{vae_tag}"
     EPOCHS = 100
+
+OUT_DIR = Path(f"checkpoints/clstm_latents_{suffix}")
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -70,13 +76,17 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,  drop_last=False)
     test_loader  = DataLoader(test_ds,  batch_size=BATCH_SIZE, shuffle=False)
 
-    # Load VAE V2 (frozen)
+    # Load VAE (V1 or V2)
     ckpt_vae = torch.load(VAE_CHECKPOINT, map_location=DEVICE)
-    cfg      = ckpt_vae["config"]
-    latent_dim = cfg["latent_dim"]   # 16
-    print(f"VAE V2: latent_dim={latent_dim}, t_shared={cfg['t_shared']}")
-
-    vae = SensorMultiModalVAE(latent_dim=latent_dim, t_shared=cfg["t_shared"]).to(DEVICE)
+    if USE_V1:
+        latent_dim, t_shared = 8, 32
+        print(f"VAE V1: latent_dim={latent_dim}, t_shared={t_shared}")
+        vae = SensorMultiModalVAE().to(DEVICE)
+    else:
+        cfg = ckpt_vae["config"]
+        latent_dim, t_shared = cfg["latent_dim"], cfg["t_shared"]
+        print(f"VAE V2: latent_dim={latent_dim}, t_shared={t_shared}")
+        vae = SensorMultiModalVAE(latent_dim=latent_dim, t_shared=t_shared).to(DEVICE)
     vae.load_state_dict(ckpt_vae["model_state"])
     vae.eval()
     for p in vae.parameters():
