@@ -137,6 +137,7 @@ class CLSTMAttentionClassifier(nn.Module):
 def create_clstm_classifier(
     n_sensors=7,
     n_classes=54,
+    in_channels=3,
     cnn_channels=64,
     lstm_hidden=64,
     d_attn=128,
@@ -147,7 +148,7 @@ def create_clstm_classifier(
 ):
     return CLSTMAttentionClassifier(
         n_sensors=n_sensors,
-        in_channels=3,
+        in_channels=in_channels,
         cnn_channels=cnn_channels,
         lstm_hidden=lstm_hidden,
         d_attn=d_attn,

@@ -40,12 +40,12 @@ DROPOUT    = 0.1
 
 # Training
 BATCH_SIZE   = 128
-LR           = 2e-4
+LR           = 1e-4        # reduced: 2e-4 caused NaN at epoch 40
 WEIGHT_DECAY = 1e-4
-GRAD_CLIP    = 1.0
+GRAD_CLIP    = 0.5         # tighter clipping for stability
 USE_AMP      = True
 MIN_SNR_GAMMA = 5.0
-RECON_LOSS_WEIGHT = 0.1
+RECON_LOSS_WEIGHT = 0.05   # reduced: 0.1 contributed to instability
 
 # Phase 1: Pre-train on WISDM + CogAge
 PRETRAIN_EPOCHS = 300
@@ -134,14 +134,30 @@ def train_epoch(model, loader, opt, scaler, sched, epoch, total_epochs, device):
             weight     = torch.clamp(snr[t], max=MIN_SNR_GAMMA) / snr[t]
             noise_loss = (weight * per_s).mean()
 
-            # Auxiliary pred_x0 loss
-            ab_t   = sched["alpha_bar"][t].view(-1, 1, 1, 1).to(device)
-            pred_x0 = (z_t - torch.sqrt(1 - ab_t) * noise_pred) / torch.sqrt(ab_t)
-            recon_err = ((pred_x0 - z0) ** 2 * missing_mask[:, :, None, None])
-            recon_loss = (recon_err.sum(dim=(1, 2, 3))
-                          / (n_miss.squeeze() * D_lat * T_lat)).mean()
+            # Auxiliary pred_x0 loss — only for low-noise steps (ab_t > 0.1)
+            # to avoid division by near-zero sqrt(ab_t) at high t
+            ab_t    = sched["alpha_bar"][t].view(-1, 1, 1, 1).to(device)
+            low_noise = (ab_t.squeeze() > 0.1)  # only stable timesteps
+            if low_noise.any():
+                ab_t_ln   = ab_t[low_noise]
+                z_t_ln    = z_t[low_noise]
+                z0_ln     = z0[low_noise]
+                np_ln     = noise_pred[low_noise]
+                mm_ln     = missing_mask[low_noise]
+                nm_ln     = mm_ln.sum(dim=1, keepdim=True).clamp_min(1)
+                pred_x0   = (z_t_ln - torch.sqrt(1 - ab_t_ln) * np_ln) / torch.sqrt(ab_t_ln)
+                pred_x0   = torch.clamp(pred_x0, -10.0, 10.0)
+                recon_err = ((pred_x0 - z0_ln) ** 2 * mm_ln[:, :, None, None])
+                recon_loss = (recon_err.sum(dim=(1, 2, 3))
+                              / (nm_ln.squeeze() * D_lat * T_lat)).mean()
+                loss = noise_loss + RECON_LOSS_WEIGHT * recon_loss
+            else:
+                loss = noise_loss
 
-            loss = noise_loss + RECON_LOSS_WEIGHT * recon_loss
+        # Skip NaN batches instead of corrupting model weights
+        if torch.isnan(loss):
+            opt.zero_grad(set_to_none=True)
+            continue
 
         scaler.scale(loss).backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
