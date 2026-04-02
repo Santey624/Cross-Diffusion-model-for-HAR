@@ -142,9 +142,12 @@ def main():
         print(f"Loading diffusion from {DIFFUSION_DIR}...")
         diff_ckpt  = torch.load(DIFFUSION_DIR / "best_model.pt", map_location=DEVICE)
         dcfg       = diff_ckpt["config"]
+        # infer latent_dim from saved weights (not always stored in config)
+        diff_latent_dim = diff_ckpt["model_state"]["sensor_embeddings.weight"].shape[1]
         diffusion  = create_sensor_diffusion_v3(
             d_model=dcfg["d_model"], num_heads=dcfg["num_heads"],
             num_blocks=dcfg["num_blocks"], dropout=0.0,
+            latent_dim=diff_latent_dim,
         ).to(DEVICE)
         diffusion.load_state_dict(diff_ckpt["model_state"])
         diffusion.eval()

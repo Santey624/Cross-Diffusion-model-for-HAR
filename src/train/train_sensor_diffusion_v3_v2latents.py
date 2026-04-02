@@ -262,7 +262,8 @@ def main():
             "loss": loss, "T": T, "schedule": SCHEDULE,
             "version": "v3_conditional",
             "config": {"d_model": D_MODEL, "num_heads": NUM_HEADS,
-                       "num_blocks": NUM_BLOCKS, "dropout": DROPOUT},
+                       "num_blocks": NUM_BLOCKS, "dropout": DROPOUT,
+                       "latent_dim": latent_dim},
         }, path)
 
     # -------- Phase 1: Pre-train --------
