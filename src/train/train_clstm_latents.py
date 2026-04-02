@@ -178,7 +178,7 @@ def main():
 
     opt       = torch.optim.AdamW(classifier.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCHS)
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     best_acc  = 0.0
 
     for epoch in range(1, EPOCHS + 1):
@@ -224,6 +224,7 @@ def main():
             logits = classifier(latents, SENSOR_NAMES)
             loss   = criterion(logits, labels)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(classifier.parameters(), 1.0)
             opt.step()
 
             train_loss    += loss.item()

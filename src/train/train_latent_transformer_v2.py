@@ -56,16 +56,17 @@ tag     = f"{MODEL_TYPE}_{'state' if USE_STATE else 'behavioral'}{'_robust' if R
 OUT_DIR = Path(f"checkpoints/latent_{tag}")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-BATCH_SIZE = 32
-LR         = 1e-3
-MASK_PROB  = 0.5
-DDIM_STEPS = 20   # fewer steps during training (faster, good enough for augmentation)
+BATCH_SIZE   = 32
+LR           = 5e-4
+WEIGHT_DECAY = 1e-4
+MASK_PROB    = 0.5
+DDIM_STEPS   = 20   # fewer steps during training (faster, good enough for augmentation)
 
 # Transformer — SMALL params (fix for behavioral not converging)
 D_MODEL  = 128
 N_HEADS  = 4
 N_LAYERS = 2
-DROPOUT  = 0.3
+DROPOUT  = 0.4
 
 
 # ============================================================
@@ -177,9 +178,9 @@ def main():
     n_params = sum(p.numel() for p in classifier.parameters())
     print(f"{MODEL_TYPE} params: {n_params/1e6:.2f}M\n")
 
-    opt       = torch.optim.Adam(classifier.parameters(), lr=LR)
+    opt       = torch.optim.AdamW(classifier.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCHS)
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     best_acc  = 0.0
 
     for epoch in range(1, EPOCHS + 1):
@@ -223,6 +224,7 @@ def main():
             logits = classifier(latents, SENSOR_NAMES)
             loss   = criterion(logits, labels)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(classifier.parameters(), 1.0)
             opt.step()
 
             train_loss    += loss.item()
