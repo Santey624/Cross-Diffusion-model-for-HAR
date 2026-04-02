@@ -207,22 +207,31 @@ def main():
             gt = latents[target_name].to(DEVICE)
             latent_mse = F.mse_loss(imputed, gt).item()
 
+            # Mean-fill baseline (training mean latent)
+            mean_lat = latents[target_name].mean(dim=0, keepdim=True).to(DEVICE)
+            mean_fill = mean_lat.expand_as(gt)
+            latent_mse_mean = F.mse_loss(mean_fill, gt).item()
+
             # Decode with VAE (using shared decoder)
             with torch.no_grad():
-                imputed_signals = vae.decode_sensor(target_name, imputed).cpu()
-                gt_signals = vae.decode_sensor(target_name, gt).cpu()
+                imputed_signals    = vae.decode_sensor(target_name, imputed).cpu()
+                gt_signals         = vae.decode_sensor(target_name, gt).cpu()
+                mean_signals       = vae.decode_sensor(target_name, mean_fill).cpu()
 
-            signal_mse = F.mse_loss(imputed_signals, gt_signals).item()
-            per_sample = ((imputed_signals - gt_signals) ** 2).mean(dim=(1, 2))
+            signal_mse      = F.mse_loss(imputed_signals, gt_signals).item()
+            signal_mse_mean = F.mse_loss(mean_signals,   gt_signals).item()
+
+            best_l = "Diff" if latent_mse < latent_mse_mean else "Mean"
+            best_s = "Diff" if signal_mse  < signal_mse_mean  else "Mean"
 
             scenario_results[target_name] = {
-                "latent_mse": latent_mse,
-                "signal_mse": signal_mse,
-                "per_sample_mean": per_sample.mean().item(),
-                "per_sample_std": per_sample.std().item(),
+                "latent_mse": latent_mse, "latent_mse_mean": latent_mse_mean,
+                "signal_mse": signal_mse, "signal_mse_mean": signal_mse_mean,
             }
 
-            print(f"  {target_name:15s}: Latent MSE={latent_mse:.6f}, Signal MSE={signal_mse:.6f}")
+            print(f"  {target_name:15s}: "
+                  f"L-MSE Diff={latent_mse:.4f}  Mean={latent_mse_mean:.4f}  [{best_l}] | "
+                  f"S-MSE Diff={signal_mse:.4f}  Mean={signal_mse_mean:.4f}  [{best_s}]")
 
             # Visualize first 3 samples
             n_ch = imputed_signals.shape[2]
