@@ -1,6 +1,14 @@
 # ============================================================
-# Train Sensor VAE V2 — Larger Latent Space
-# D=16, T=64 (vs D=8, T=32 in V1)
+# Train Sensor VAE V3 — Strong Alignment for Imputation
+#
+# Key difference to V2:
+#   - ALIGN_WEIGHT: 0.05 → 1.0
+#   - Alignment on FULL latent sequence (B, D, T), not time-mean
+#   - Cosine similarity term added (directional alignment)
+#   Goal: phone_acc ↔ watch_acc ↔ glasses_acc latents become
+#         strongly correlated so diffusion imputation can beat mean-fill
+#
+# Same architecture as V2: D=16, T=64
 # ============================================================
 
 from torch.utils.data import DataLoader, ConcatDataset
@@ -19,19 +27,17 @@ from src.losses.sensor_vae_loss_masked import sensor_vae_loss_masked
 # ============================================================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# V2: larger latent space
-LATENT_DIM   = 16   # was 8
-T_SHARED     = 64   # was 32
+LATENT_DIM   = 16
+T_SHARED     = 64
 
 BATCH_SIZE       = 32
 EPOCHS           = 150
 LR               = 1e-3
-BETA             = 1e-3       # same small KL weight as V1
-KL_WARMUP_EPOCHS = 50         # slightly longer warmup for larger model
-ALIGN_WEIGHT     = 0.05
+BETA             = 1e-3
+KL_WARMUP_EPOCHS = 50
+ALIGN_WEIGHT     = 1.0   # V2 was 0.05 — strong alignment for imputation
 
 NUM_WORKERS = 4
-
 PIN_MEMORY  = True
 
 COGAGE_ROOTS = {
@@ -44,7 +50,7 @@ WISDM_ROOT = "data/wisdm/arrays"
 WISDM_REAL_SENSORS = {"phone_acc", "phone_gyro", "watch_acc", "watch_gyro"}
 ALL_SENSORS = set(SENSOR_NAMES)
 
-OUT_DIR = Path("checkpoints/sensor_vae_v2")
+OUT_DIR = Path("checkpoints/sensor_vae_v3")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
@@ -55,7 +61,7 @@ NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
 # ============================================================
 class TaggedDataset(torch.utils.data.Dataset):
     def __init__(self, dataset, source_tag):
-        self.dataset   = dataset
+        self.dataset    = dataset
         self.source_tag = source_tag
 
     def __len__(self):
@@ -75,15 +81,13 @@ def main():
     scaler = torch.cuda.amp.GradScaler()
 
     print(f"\n{'='*60}")
-    print("Training Sensor VAE V2 (D=16, T=64) on CogAge + WISDM")
+    print("Training Sensor VAE V3 (D=16, T=64) — Strong Alignment")
     print(f"Beta: {BETA}, Align: {ALIGN_WEIGHT}, Warmup: {KL_WARMUP_EPOCHS} epochs")
+    print(f"Alignment: full sequence MSE + cosine similarity")
     print(f"{'='*60}\n")
 
-    # Normalizer (reuse V1 normalizer — same raw data stats)
     normalizer = SensorNormalizer.load(NORMALIZER_PATH)
-    print(f"Loaded normalizer from {NORMALIZER_PATH}")
 
-    # CogAge datasets
     print("\nLoading CogAge datasets...")
     cogage_train = ConcatDataset([
         TaggedDataset(CogAgeSensorDataset(COGAGE_ROOTS["blho"],  "training", normalizer), "cogage"),
@@ -97,7 +101,6 @@ def main():
     ])
     print(f"CogAge train: {len(cogage_train)}, test: {len(cogage_test)}")
 
-    # WISDM
     print("\nLoading WISDM dataset...")
     wisdm_path = Path(WISDM_ROOT)
     if wisdm_path.exists():
@@ -121,8 +124,7 @@ def main():
         num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY,
     )
 
-    # Model V2
-    print(f"\nCreating SensorMultiModalVAE V2 (latent_dim={LATENT_DIM}, t_shared={T_SHARED})...")
+    print(f"\nCreating SensorMultiModalVAE V3 (latent_dim={LATENT_DIM}, t_shared={T_SHARED})...")
     model = SensorMultiModalVAE(latent_dim=LATENT_DIM, t_shared=T_SHARED).to(DEVICE)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Parameters: {n_params / 1e6:.2f}M")
@@ -137,8 +139,8 @@ def main():
     for epoch in range(1, EPOCHS + 1):
         # ---------- TRAIN ----------
         model.train()
-        warmup    = min(epoch / KL_WARMUP_EPOCHS, 1.0)
-        beta_eff  = BETA * warmup * warmup
+        warmup   = min(epoch / KL_WARMUP_EPOCHS, 1.0)
+        beta_eff = BETA * warmup * warmup
 
         train_tot = train_rec = train_kl = train_align = 0.0
         n_cogage = n_wisdm = 0
@@ -216,14 +218,14 @@ def main():
             f"kl={test_kl:.4f} align={test_align:.4f}\n"
         )
 
-        # ---------- CHECKPOINT ----------
         ckpt = {
             "epoch": epoch,
             "model_state": model.state_dict(),
             "optimizer_state": optimizer.state_dict(),
             "beta": beta_eff,
             "test_recon": test_rec,
-            "config": {"latent_dim": LATENT_DIM, "t_shared": T_SHARED},
+            "config": {"latent_dim": LATENT_DIM, "t_shared": T_SHARED,
+                       "align_weight": ALIGN_WEIGHT},
         }
 
         if epoch % 25 == 0:

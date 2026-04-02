@@ -1,6 +1,12 @@
 # ============================================================
 # Sensor-Level VAE Loss with Sensor Masking
 # Supports partial sensor data (e.g., WISDM has only 4/7 sensors)
+#
+# Alignment loss (V2): full latent sequence alignment
+#   - MSE on full (B, D, T) latent sequences (not just time-mean)
+#   - Cosine similarity on flattened latents (directional correlation)
+#   Both together encourage same magnitude AND same direction in latent space,
+#   which is required for cross-sensor diffusion imputation to work.
 # ============================================================
 
 import torch
@@ -14,7 +20,10 @@ ALIGNMENT_GROUPS = [
 
 
 def alignment_loss(outputs, valid_sensors=None):
-    """Alignment loss, only between sensors that have real data."""
+    """
+    Full-sequence alignment between same-type sensors.
+    Combines MSE (magnitude) + cosine similarity (direction).
+    """
     loss = 0.0
     count = 0
 
@@ -25,11 +34,23 @@ def alignment_loss(outputs, valid_sensors=None):
         if len(present) < 2:
             continue
 
-        mus = [outputs[name]["mu"].mean(dim=2) for name in present]
+        # Full latent sequences (B, D, T)
+        mus = [outputs[name]["mu"] for name in present]
 
         for i in range(len(mus)):
             for j in range(i + 1, len(mus)):
-                loss = loss + F.mse_loss(mus[i], mus[j])
+                mu_i = mus[i]  # (B, D, T)
+                mu_j = mus[j]
+
+                # MSE on full sequence — aligns magnitude and shape
+                mse = F.mse_loss(mu_i, mu_j)
+
+                # Cosine similarity on flattened latent — aligns direction
+                flat_i = mu_i.flatten(1)  # (B, D*T)
+                flat_j = mu_j.flatten(1)
+                cos = 1.0 - F.cosine_similarity(flat_i, flat_j, dim=1).mean()
+
+                loss = loss + mse + 0.5 * cos
                 count += 1
 
     return loss / max(count, 1)
