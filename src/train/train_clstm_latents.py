@@ -49,7 +49,7 @@ else:
         "bbh":  "data/cogage/python/arrays/bbh",
     }
     suffix = f"behavioral{'_robust' if ROBUST else ''}_{vae_tag}"
-    EPOCHS = 100
+    EPOCHS = 150
 
 OUT_DIR = Path(f"checkpoints/clstm_latents_{suffix}")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -59,10 +59,11 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 DIFFUSION_DIR = Path("checkpoints/sensor_diffusion_v3") if USE_V1 \
                 else Path("checkpoints/sensor_diffusion_v3_v2")
 
-BATCH_SIZE  = 32
-LR          = 1e-3
-MASK_PROB   = 0.5
-DDIM_STEPS  = 20   # fewer steps during training (faster, good enough for augmentation)
+BATCH_SIZE   = 32
+LR           = 5e-4
+WEIGHT_DECAY = 1e-4
+MASK_PROB    = 0.5
+DDIM_STEPS   = 20   # fewer steps during training (faster, good enough for augmentation)
 
 
 # ============================================================
@@ -169,13 +170,13 @@ def main():
         n_heads=4,
         n_layers=2,
         pool_size=16,
-        dropout=0.3,
+        dropout=0.4,
     ).to(DEVICE)
 
     n_params = sum(p.numel() for p in classifier.parameters())
     print(f"C-LSTM-A (latent) params: {n_params/1e6:.2f}M\n")
 
-    opt       = torch.optim.Adam(classifier.parameters(), lr=LR)
+    opt       = torch.optim.AdamW(classifier.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCHS)
     criterion = nn.CrossEntropyLoss()
     best_acc  = 0.0
