@@ -46,6 +46,7 @@ GRAD_CLIP    = 0.5         # tighter clipping for stability
 USE_AMP      = True
 MIN_SNR_GAMMA = 5.0
 RECON_LOSS_WEIGHT = 0.05   # reduced: 0.1 contributed to instability
+FFT_LOSS_WEIGHT   = 0.05   # frequency-domain loss on pred_x0 (same as V3)
 
 # Phase 1: Pre-train on WISDM + CogAge
 PRETRAIN_EPOCHS = 300
@@ -150,7 +151,15 @@ def train_epoch(model, loader, opt, scaler, sched, epoch, total_epochs, device):
                 recon_err = ((pred_x0 - z0_ln) ** 2 * mm_ln[:, :, None, None])
                 recon_loss = (recon_err.sum(dim=(1, 2, 3))
                               / (nm_ln.squeeze() * D_lat * T_lat)).mean()
-                loss = noise_loss + RECON_LOSS_WEIGHT * recon_loss
+
+                # FFT loss: match frequency spectrum of pred_x0 to real x0
+                pred_fft  = torch.fft.rfft(pred_x0, dim=-1).abs()
+                real_fft  = torch.fft.rfft(z0_ln,   dim=-1).abs()
+                fft_err   = ((pred_fft - real_fft) ** 2 * mm_ln[:, :, None, None])
+                fft_loss  = (fft_err.sum(dim=(1, 2, 3))
+                             / (nm_ln.squeeze() * D_lat * (T_lat // 2 + 1))).mean()
+
+                loss = noise_loss + RECON_LOSS_WEIGHT * recon_loss + FFT_LOSS_WEIGHT * fft_loss
             else:
                 loss = noise_loss
 
