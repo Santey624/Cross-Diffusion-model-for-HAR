@@ -164,9 +164,9 @@ def main():
         n_sensors=len(SENSOR_NAMES),
         n_classes=n_classes,
         in_channels=latent_dim,   # key difference from decoded variant
-        cnn_channels=64,
-        lstm_hidden=64,
-        d_attn=128,
+        cnn_channels=32,
+        lstm_hidden=32,
+        d_attn=64,
         n_heads=4,
         n_layers=2,
         pool_size=16,

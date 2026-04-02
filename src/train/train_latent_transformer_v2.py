@@ -56,17 +56,19 @@ tag     = f"{MODEL_TYPE}_{'state' if USE_STATE else 'behavioral'}{'_robust' if R
 OUT_DIR = Path(f"checkpoints/latent_{tag}")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-BATCH_SIZE   = 32
-LR           = 5e-4
-WEIGHT_DECAY = 1e-4
-MASK_PROB    = 0.5
-DDIM_STEPS   = 20   # fewer steps during training (faster, good enough for augmentation)
+BATCH_SIZE = 32
+MASK_PROB  = 0.5
+DDIM_STEPS = 20   # fewer steps during training (faster, good enough for augmentation)
 
-# Transformer — SMALL params (fix for behavioral not converging)
+# Transformer/MLP — less regularization needed vs CLSTM
+LR           = 1e-3
+WEIGHT_DECAY = 1e-4
+DROPOUT      = 0.2 if MODEL_TYPE == "transformer" else 0.3
+
+# Transformer architecture
 D_MODEL  = 128
 N_HEADS  = 4
 N_LAYERS = 2
-DROPOUT  = 0.4
 
 
 # ============================================================
