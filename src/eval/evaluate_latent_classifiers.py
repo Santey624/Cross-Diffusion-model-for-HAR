@@ -186,8 +186,8 @@ def main():
     if MODEL_TYPE == "clstm":
         # Infer architecture from checkpoint weights
         w = clf_ckpt["model_state"]
-        cnn_channels = w["sensor_cnns.0.0.weight"].shape[0]
-        lstm_hidden  = w["lstm.weight_hh_l0"].shape[1]
+        cnn_channels = w["branches.0.cnn.0.weight"].shape[0]
+        lstm_hidden  = w["branches.0.lstm.weight_hh_l0"].shape[1]
         d_attn       = w["head.0.weight"].shape[0]
         classifier = create_clstm_classifier(
             n_sensors=len(SENSOR_NAMES),
