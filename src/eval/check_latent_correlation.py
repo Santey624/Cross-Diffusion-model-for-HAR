@@ -4,17 +4,25 @@
 # theoretically optimal and diffusion cannot beat it.
 # ============================================================
 
+import argparse
 import torch
 import numpy as np
 from pathlib import Path
 from src.models.sensor_vae import SENSOR_NAMES
 
-# Load pre-extracted latents (faster than encoding on-the-fly)
-# Try V2 first, fall back to V1
+parser = argparse.ArgumentParser()
+parser.add_argument("--v3", action="store_true", help="Use V3 latents")
+parser.add_argument("--v2", action="store_true", help="Use V2 latents")
+args = parser.parse_args()
+
+V3_DIR = Path("data/sensor_latents_v3")
 V2_DIR = Path("data/sensor_latents_v2")
 V1_DIR = Path("data/sensor_latents")
 
-if V2_DIR.exists() and (V2_DIR / f"training_latents_{SENSOR_NAMES[0]}_mu.pt").exists():
+if args.v3 and V3_DIR.exists() and (V3_DIR / f"training_latents_{SENSOR_NAMES[0]}_mu.pt").exists():
+    LAT_DIR = V3_DIR
+    TAG = "V3 (D=16, T=64, strong align)"
+elif (args.v2 or not args.v3) and V2_DIR.exists() and (V2_DIR / f"training_latents_{SENSOR_NAMES[0]}_mu.pt").exists():
     LAT_DIR = V2_DIR
     TAG = "V2 (D=16, T=64)"
 else:
