@@ -197,7 +197,7 @@ def main():
 
             # Robust: randomly impute missing sensors via diffusion
             if ROBUST and random.random() < MASK_PROB:
-                n_miss  = random.randint(1, 3)
+                n_miss  = random.randint(1, 6)
                 missing = random.sample(SENSOR_NAMES, n_miss)
 
                 # Normalize latents for diffusion
