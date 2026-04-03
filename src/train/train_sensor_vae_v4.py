@@ -40,9 +40,10 @@ BATCH_SIZE       = 32
 EPOCHS           = 150
 LR               = 1e-3
 BETA_SHARED      = 1e-3
-BETA_PRIVATE     = 2e-2   # raised from 1e-3: forces z_private near prior (kl_p target: 20–40)
+BETA_PRIVATE     = 2e-2   # forces z_private near prior (kl_p target: 20–40)
+ALIGN_WEIGHT     = 1.0    # alignment on per-sensor mu_s (before PoE)
 KL_WARMUP_EPOCHS = 50
-MASK_RATIO       = 0.5    # raised from 0.3: decoder must work without z_private more often
+MASK_RATIO       = 0.5    # decoder must work without z_private more often
 
 NUM_WORKERS = 4
 PIN_MEMORY  = True
@@ -155,7 +156,7 @@ def main():
         beta_eff      = BETA_SHARED * warmup * warmup
         beta_priv_eff = BETA_PRIVATE * warmup * warmup
 
-        t_tot = t_rec = t_kls = t_klp = 0.0
+        t_tot = t_rec = t_kls = t_klp = t_aln = 0.0
         n_cogage = n_wisdm = 0
 
         for batch in tqdm(train_loader, desc=f"[Train] {epoch}/{EPOCHS}", leave=False):
@@ -181,7 +182,7 @@ def main():
                 loss, parts = sensor_vae_v4_loss(
                     outputs, sensor_data, mu_shared, logvar_shared,
                     beta_shared=beta_eff, beta_private=beta_priv_eff,
-                    valid_sensors=valid,
+                    align_weight=ALIGN_WEIGHT, valid_sensors=valid,
                 )
 
             scaler.scale(loss).backward()
@@ -193,13 +194,14 @@ def main():
             t_rec += parts["recon"].item()
             t_kls += parts["kl_s"].item()
             t_klp += parts["kl_p"].item()
+            t_aln += parts["align"].item()
 
         N = len(train_loader)
-        t_tot /= N; t_rec /= N; t_kls /= N; t_klp /= N
+        t_tot /= N; t_rec /= N; t_kls /= N; t_klp /= N; t_aln /= N
 
         # ---------- EVAL ----------
         model.eval()
-        e_tot = e_rec = e_kls = e_klp = 0.0
+        e_tot = e_rec = e_kls = e_klp = e_aln = 0.0
 
         with torch.no_grad():
             for batch in tqdm(test_loader, desc=f"[Eval ] {epoch}/{EPOCHS}", leave=False):
@@ -209,20 +211,21 @@ def main():
                     loss, parts = sensor_vae_v4_loss(
                         outputs, sensor_data, mu_shared, logvar_shared,
                         beta_shared=beta_eff, beta_private=beta_priv_eff,
-                        valid_sensors=ALL_SENSORS,
+                        align_weight=ALIGN_WEIGHT, valid_sensors=ALL_SENSORS,
                     )
                 e_tot += loss.item()
                 e_rec += parts["recon"].item()
                 e_kls += parts["kl_s"].item()
                 e_klp += parts["kl_p"].item()
+                e_aln += parts["align"].item()
 
         M = len(test_loader)
-        e_tot /= M; e_rec /= M; e_kls /= M; e_klp /= M
+        e_tot /= M; e_rec /= M; e_kls /= M; e_klp /= M; e_aln /= M
 
         print(
             f"Epoch {epoch:03d} | beta_s={beta_eff:.2e} | cogage={n_cogage} wisdm={n_wisdm}\n"
-            f"  Train: loss={t_tot:.4f} recon={t_rec:.4f} kl_s={t_kls:.4f} kl_p={t_klp:.4f}\n"
-            f"  Test : loss={e_tot:.4f} recon={e_rec:.4f} kl_s={e_kls:.4f} kl_p={e_klp:.4f}\n"
+            f"  Train: loss={t_tot:.4f} recon={t_rec:.4f} kl_s={t_kls:.4f} kl_p={t_klp:.4f} align={t_aln:.4f}\n"
+            f"  Test : loss={e_tot:.4f} recon={e_rec:.4f} kl_s={e_kls:.4f} kl_p={e_klp:.4f} align={e_aln:.4f}\n"
         )
 
         ckpt = {
