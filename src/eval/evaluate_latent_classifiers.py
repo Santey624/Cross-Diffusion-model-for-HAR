@@ -184,18 +184,28 @@ def main():
     print(f"  Best acc: {clf_ckpt.get('acc', '?'):.4f}")
 
     if MODEL_TYPE == "clstm":
+        # Infer architecture from checkpoint weights
+        w = clf_ckpt["model_state"]
+        cnn_channels = w["sensor_cnns.0.0.weight"].shape[0]
+        lstm_hidden  = w["lstm.weight_hh_l0"].shape[1]
+        d_attn       = w["head.0.weight"].shape[0]
         classifier = create_clstm_classifier(
             n_sensors=len(SENSOR_NAMES),
             n_classes=n_classes,
             in_channels=latent_dim,
-            cnn_channels=64, lstm_hidden=64,
-            d_attn=128, n_heads=4, n_layers=2,
+            cnn_channels=cnn_channels, lstm_hidden=lstm_hidden,
+            d_attn=d_attn, n_heads=4, n_layers=2,
             pool_size=16, dropout=0.0,
         ).to(DEVICE)
+        print(f"  CLSTM arch: cnn={cnn_channels}, lstm={lstm_hidden}, d_attn={d_attn}")
     else:
         clf_cfg = {}
         if MODEL_TYPE == "transformer":
-            clf_cfg = {"d_model": 128, "n_heads": 4, "n_layers": 2, "dropout": 0.0}
+            # Infer d_model from checkpoint
+            w = clf_ckpt["model_state"]
+            d_model = w["transformer.layers.0.self_attn.in_proj_weight"].shape[1]
+            clf_cfg = {"d_model": d_model, "n_heads": 4, "n_layers": 2, "dropout": 0.0}
+            print(f"  Transformer arch: d_model={d_model}")
         else:  # mlp
             clf_cfg = {"hidden_dims": [512, 256, 128], "dropout": 0.0}
         classifier = create_activity_classifier(
