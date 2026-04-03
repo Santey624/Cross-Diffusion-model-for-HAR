@@ -40,9 +40,9 @@ BATCH_SIZE       = 32
 EPOCHS           = 150
 LR               = 1e-3
 BETA_SHARED      = 1e-3
-BETA_PRIVATE     = 1e-3
+BETA_PRIVATE     = 1e-2   # raised from 1e-3: forces z_private near prior (kl_p target: 20–40)
 KL_WARMUP_EPOCHS = 50
-MASK_RATIO       = 0.3   # fraction of sensors randomly dropped from PoE per batch
+MASK_RATIO       = 0.5    # raised from 0.3: decoder must work without z_private more often
 
 NUM_WORKERS = 4
 PIN_MEMORY  = True
