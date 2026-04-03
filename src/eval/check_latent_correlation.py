@@ -11,15 +11,20 @@ from pathlib import Path
 from src.models.sensor_vae import SENSOR_NAMES
 
 parser = argparse.ArgumentParser()
+parser.add_argument("--v4", action="store_true", help="Use V4 shared latents (PoE)")
 parser.add_argument("--v3", action="store_true", help="Use V3 latents")
 parser.add_argument("--v2", action="store_true", help="Use V2 latents")
 args = parser.parse_args()
 
+V4_DIR = Path("data/sensor_latents_v4")
 V3_DIR = Path("data/sensor_latents_v3")
 V2_DIR = Path("data/sensor_latents_v2")
 V1_DIR = Path("data/sensor_latents")
 
-if args.v3 and V3_DIR.exists() and (V3_DIR / f"training_latents_{SENSOR_NAMES[0]}_mu.pt").exists():
+if args.v4 and V4_DIR.exists() and (V4_DIR / f"training_latents_{SENSOR_NAMES[0]}_mu.pt").exists():
+    LAT_DIR = V4_DIR
+    TAG = "V4 (D=8 shared, PoE)"
+elif args.v3 and V3_DIR.exists() and (V3_DIR / f"training_latents_{SENSOR_NAMES[0]}_mu.pt").exists():
     LAT_DIR = V3_DIR
     TAG = "V3 (D=16, T=64, strong align)"
 elif (args.v2 or not args.v3) and V2_DIR.exists() and (V2_DIR / f"training_latents_{SENSOR_NAMES[0]}_mu.pt").exists():
