@@ -231,7 +231,7 @@ def main():
         if epoch % 25 == 0:
             torch.save(ckpt, OUT_DIR / f"epoch_{epoch:03d}.pt")
 
-        if test_rec < best_recon:
+        if epoch >= KL_WARMUP_EPOCHS and test_rec < best_recon:
             best_recon = test_rec
             torch.save(ckpt, OUT_DIR / "best_model.pt")
             print(f"  --> New best recon: {best_recon:.6f}")

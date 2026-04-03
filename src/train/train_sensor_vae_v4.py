@@ -34,14 +34,14 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 D_SHARED     = 8
 D_PRIVATE    = 8
-T_LAT        = 32
+T_LAT        = 64
 
-BATCH_SIZE       = 64
-EPOCHS           = 50
+BATCH_SIZE       = 32
+EPOCHS           = 150
 LR               = 1e-3
 BETA_SHARED      = 1e-3
-BETA_PRIVATE     = 1e-2   # raised from 1e-3: forces z_private near prior (kl_p target: 20–40)
-KL_WARMUP_EPOCHS = 20
+BETA_PRIVATE     = 2e-2   # raised from 1e-3: forces z_private near prior (kl_p target: 20–40)
+KL_WARMUP_EPOCHS = 50
 MASK_RATIO       = 0.5    # raised from 0.3: decoder must work without z_private more often
 
 NUM_WORKERS = 4
@@ -243,7 +243,7 @@ def main():
         if epoch % 25 == 0:
             torch.save(ckpt, OUT_DIR / f"epoch_{epoch:03d}.pt")
 
-        if e_rec < best_recon:
+        if epoch >= KL_WARMUP_EPOCHS and e_rec < best_recon:
             best_recon = e_rec
             torch.save(ckpt, OUT_DIR / "best_model.pt")
             print(f"  --> New best recon: {best_recon:.6f}")
