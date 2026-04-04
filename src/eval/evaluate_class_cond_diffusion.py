@@ -47,11 +47,15 @@ NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
 tag = "state" if USE_STATE else "behavioral"
 CLASS_DIFF_DIR  = Path(f"checkpoints/class_cond_diffusion_{tag}")
 
+USE_AUGMENTED = "--augmented" in sys.argv
+
 if USE_STATE:
-    CLASSIFIER_CKPT = "checkpoints/clstm_state/best_model.pt"
+    CLASSIFIER_CKPT = (f"checkpoints/clstm_classcond_state/best_model.pt" if USE_AUGMENTED
+                       else "checkpoints/clstm_state/best_model.pt")
     DATA_ROOTS      = {"state": "data/cogage/python/arrays/state"}
 else:
-    CLASSIFIER_CKPT = "checkpoints/clstm_behavioral/best_model.pt"
+    CLASSIFIER_CKPT = (f"checkpoints/clstm_classcond_behavioral/best_model.pt" if USE_AUGMENTED
+                       else "checkpoints/clstm_behavioral/best_model.pt")
     DATA_ROOTS      = {
         "blho": "data/cogage/python/arrays/blho",
         "bbh":  "data/cogage/python/arrays/bbh",
