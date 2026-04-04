@@ -203,12 +203,13 @@ def main():
             # Add noise to missing sensors only
             t_step = torch.randint(0, T, (B,), device=DEVICE)
             noise  = torch.randn_like(stacked_norm)
-            ab     = alpha_bar[t_step][:, None, None, None]
+            ab3    = alpha_bar[t_step][:, None, None]   # (B,1,1) for (B,C,T) slices
 
+            ab3 = alpha_bar[t_step][:, None, None]   # (B, 1, 1) for per-sensor slice
             noisy = stacked_norm.clone()
             for i in missing_idx:
-                noisy[:, i] = (torch.sqrt(ab) * stacked_norm[:, i]
-                               + torch.sqrt(1 - ab) * noise[:, i])
+                noisy[:, i] = (torch.sqrt(ab3) * stacked_norm[:, i]
+                               + torch.sqrt(1 - ab3) * noise[:, i])
 
             noise_pred = model(noisy, t_step, observed_mask)  # (B, K, C, T)
 
@@ -249,12 +250,13 @@ def main():
 
                 t_step = torch.randint(0, T, (B,), device=DEVICE)
                 noise  = torch.randn_like(stacked_norm)
-                ab     = alpha_bar[t_step][:, None, None, None]
+                ab3    = alpha_bar[t_step][:, None, None]   # (B,1,1) for (B,C,T) slices
 
+                ab3 = alpha_bar[t_step][:, None, None]
                 noisy = stacked_norm.clone()
                 for i in missing_idx:
-                    noisy[:, i] = (torch.sqrt(ab) * stacked_norm[:, i]
-                                   + torch.sqrt(1 - ab) * noise[:, i])
+                    noisy[:, i] = (torch.sqrt(ab3) * stacked_norm[:, i]
+                                   + torch.sqrt(1 - ab3) * noise[:, i])
 
                 noise_pred = model(noisy, t_step, observed_mask)
                 loss = sum(
