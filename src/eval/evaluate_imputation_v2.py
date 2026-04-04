@@ -190,7 +190,7 @@ def main():
     cfg_diff  = diff_ckpt["config"]
     diffusion = create_sensor_diffusion_v3(
         n_sensors=len(SENSOR_NAMES),
-        latent_dim=cfg_diff["latent_dim"],
+        latent_dim=cfg_diff.get("latent_dim", cfg_vae["latent_dim"]),
         d_model=cfg_diff["d_model"],
         num_heads=cfg_diff["num_heads"],
         num_blocks=cfg_diff["num_blocks"],
