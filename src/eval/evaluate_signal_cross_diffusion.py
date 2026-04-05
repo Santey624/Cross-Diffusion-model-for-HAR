@@ -170,8 +170,8 @@ def main():
         train_ds = get_combined_labeled_dataset(DATA_ROOTS, "training", normalizer)
     n_classes = test_ds.n_classes
 
-    test_loader  = DataLoader(test_ds,  batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
-    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+    test_loader  = DataLoader(test_ds,  batch_size=BATCH_SIZE, shuffle=False, num_workers=3)
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=3)
 
     # Diffusion model
     print(f"Loading Signal Cross-Sensor Diffusion...")
