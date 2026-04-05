@@ -57,7 +57,7 @@ else:
         "bbh":  "data/cogage/python/arrays/bbh",
     }
 
-DDIM_STEPS = 50
+DDIM_STEPS = 10
 BATCH_SIZE = 128
 
 
