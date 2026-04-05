@@ -8,6 +8,7 @@
 #   --state          use state dataset (6 classes)
 #   --augment        50% of batches: missing sensors via signal class-cond diffusion
 #   --augment-cross  30% of batches: missing sensors via cross-sensor signal diffusion
+#   --augment-vae    50% of batches: random sensors replaced by VAE encode→decode
 # ============================================================
 
 import sys
@@ -25,7 +26,7 @@ from src.models.signal_class_diffusion import (
     create_signal_class_diffusion, SENSOR_T, T_MODEL,
 )
 from src.models.signal_cross_diffusion import create_signal_cross_diffusion, T_COMMON
-from src.models.sensor_vae import SENSOR_NAMES
+from src.models.sensor_vae import SensorMultiModalVAE, SENSOR_NAMES
 from src.data.cogage_labeled_dataset import (
     get_combined_labeled_dataset, CogAgeLabeledDataset,
 )
@@ -39,6 +40,7 @@ DEVICE         = "cuda" if torch.cuda.is_available() else "cpu"
 USE_STATE      = "--state"         in sys.argv
 AUGMENT        = "--augment"       in sys.argv
 AUGMENT_CROSS  = "--augment-cross" in sys.argv
+AUGMENT_VAE    = "--augment-vae"   in sys.argv
 
 NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
 tag = "state" if USE_STATE else "behavioral"
@@ -53,6 +55,8 @@ else:
 
 if AUGMENT_CROSS:
     suffix = "_augment_cross"
+elif AUGMENT_VAE:
+    suffix = "_augment_vae"
 elif AUGMENT:
     suffix = "_augment"
 else:
@@ -62,13 +66,15 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 DIFF_DIR       = Path(f"checkpoints/signal_class_diffusion_{tag}")
 CROSS_DIFF_DIR = Path("checkpoints/signal_cross_diffusion")
-BATCH_SIZE  = 32
-EPOCHS      = 100
-LR          = 1e-3
-AUG_PROB    = 0.5
+VAE_CKPT       = "checkpoints/sensor_vae_v2/best_model.pt"
+BATCH_SIZE     = 32
+EPOCHS         = 100
+LR             = 1e-3
+AUG_PROB       = 0.5
 AUG_PROB_CROSS = 0.3
-DDIM_STEPS  = 10
-NUM_WORKERS = 4
+AUG_PROB_VAE   = 0.5
+DDIM_STEPS     = 10
+NUM_WORKERS    = 4
 
 
 # ============================================================
@@ -160,7 +166,7 @@ def prepare_signal(x, target_len):
 def main():
     print(f"\n{'='*65}")
     print(f"Training C-LSTM-A on Raw Signals — {tag}")
-    print(f"Augment: {AUGMENT} | AugmentCross: {AUGMENT_CROSS} | Device: {DEVICE}")
+    print(f"Augment: {AUGMENT} | AugmentCross: {AUGMENT_CROSS} | AugmentVAE: {AUGMENT_VAE} | Device: {DEVICE}")
     print(f"{'='*65}\n")
 
     normalizer = SensorNormalizer.load(NORMALIZER_PATH)
@@ -204,6 +210,22 @@ def main():
         betas     = cosine_beta_schedule(T_diff)
         alpha_bar = torch.cumprod(1.0 - betas, dim=0)
         print(f"  Loaded (loss={diff_ckpt['loss']:.4f})")
+
+    # VAE (only if augment-vae)
+    vae_model = None
+    if AUGMENT_VAE:
+        print(f"Loading VAE V2 from {VAE_CKPT}...")
+        vae_ckpt = torch.load(VAE_CKPT, map_location=DEVICE)
+        cfg_vae  = vae_ckpt["config"]
+        vae_model = SensorMultiModalVAE(
+            latent_dim=cfg_vae["latent_dim"],
+            t_shared=cfg_vae["t_shared"],
+        ).to(DEVICE)
+        vae_model.load_state_dict(vae_ckpt["model_state"])
+        vae_model.eval()
+        for p in vae_model.parameters():
+            p.requires_grad = False
+        print(f"  Loaded (frozen)")
 
     if AUGMENT_CROSS:
         print(f"Loading Signal Cross-Sensor Diffusion from {CROSS_DIFF_DIR}...")
@@ -322,6 +344,16 @@ def main():
                             gen, size=native_lens[name],
                             mode='linear', align_corners=False,
                         )
+
+            elif AUGMENT_VAE and random.random() < AUG_PROB_VAE:
+                n_replace = random.randint(1, 3)
+                replaced  = random.sample(SENSOR_NAMES, n_replace)
+                with torch.no_grad():
+                    for name in replaced:
+                        x   = batch[name].to(DEVICE).float()   # (B, T, C)
+                        mu, _ = vae_model.encode_sensor(name, x)
+                        recon = vae_model.decode_sensor(name, mu)  # (B, T, C)
+                        signals[name] = recon.permute(0, 2, 1)     # (B, C, T)
 
             logits = classifier(signals, SENSOR_NAMES)
             loss   = criterion(logits, labels)

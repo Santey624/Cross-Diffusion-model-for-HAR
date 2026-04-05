@@ -59,8 +59,19 @@ MIN_MISSING = 1
 MAX_MISSING = 3
 NUM_WORKERS = 4
 
-# Loss weights: total = noise_loss + LAMBDA_RECON * recon_loss
+# Loss weights: total = noise_loss + LAMBDA_RECON * recon_loss + LAMBDA_FFT * fft_loss
 LAMBDA_RECON = 1.0
+LAMBDA_FFT   = 0.1
+
+
+# ============================================================
+# FFT loss — penalizes wrong frequency content
+# ============================================================
+def fft_loss(pred, target):
+    """pred, target: (B, T, C) — compares magnitude spectra"""
+    pred_mag   = torch.fft.rfft(pred,   dim=1).abs()
+    target_mag = torch.fft.rfft(target, dim=1).abs()
+    return F.mse_loss(pred_mag, target_mag)
 
 
 # ============================================================
@@ -147,6 +158,7 @@ def main():
         model.train()
         train_noise_loss = 0.0
         train_recon_loss = 0.0
+        train_freq_loss  = 0.0
         n_batches = 0
 
         for batch in tqdm(train_loader, desc=f"[Train] {epoch}/{EPOCHS}", leave=False):
@@ -195,6 +207,7 @@ def main():
             #    recover z0_pred from noise_pred (differentiable),
             #    decode with frozen VAE, compare to original signal
             recon_loss = torch.tensor(0.0, device=DEVICE)
+            freq_loss  = torch.tensor(0.0, device=DEVICE)
             for i in missing_idx:
                 # z0_pred: (B, D, T_SHARED)
                 z0_pred = ((noisy[:, i] - torch.sqrt(1 - ab3) * noise_pred[:, i])
@@ -203,9 +216,11 @@ def main():
                 recon   = vae.decode_sensor(name, z0_pred)   # (B, T, C)
                 target  = sensor_data[name]                   # (B, T, C)
                 recon_loss = recon_loss + F.mse_loss(recon, target)
+                freq_loss  = freq_loss  + fft_loss(recon, target)
             recon_loss = recon_loss / len(missing_idx)
+            freq_loss  = freq_loss  / len(missing_idx)
 
-            loss = noise_loss + LAMBDA_RECON * recon_loss
+            loss = noise_loss + LAMBDA_RECON * recon_loss + LAMBDA_FFT * freq_loss
 
             optimizer.zero_grad()
             loss.backward()
@@ -214,16 +229,19 @@ def main():
 
             train_noise_loss += noise_loss.item()
             train_recon_loss += recon_loss.item()
+            train_freq_loss  += freq_loss.item()
             n_batches += 1
 
         train_noise_loss /= n_batches
         train_recon_loss /= n_batches
+        train_freq_loss  /= n_batches
         scheduler.step()
 
         # Eval
         model.eval()
         eval_noise_loss = 0.0
         eval_recon_loss = 0.0
+        eval_freq_loss  = 0.0
         n_eval = 0
 
         with torch.no_grad():
@@ -264,6 +282,7 @@ def main():
                 ) / len(missing_idx)
 
                 recon_loss = torch.tensor(0.0, device=DEVICE)
+                freq_loss  = torch.tensor(0.0, device=DEVICE)
                 for i in missing_idx:
                     z0_pred = ((noisy[:, i] - torch.sqrt(1 - ab3) * noise_pred[:, i])
                                / torch.sqrt(ab3)).clamp(-10, 10)
@@ -271,21 +290,25 @@ def main():
                     recon  = vae.decode_sensor(name, z0_pred)
                     target = sensor_data[name]
                     recon_loss = recon_loss + F.mse_loss(recon, target)
+                    freq_loss  = freq_loss  + fft_loss(recon, target)
                 recon_loss = recon_loss / len(missing_idx)
+                freq_loss  = freq_loss  / len(missing_idx)
 
                 eval_noise_loss += noise_loss.item()
                 eval_recon_loss += recon_loss.item()
+                eval_freq_loss  += freq_loss.item()
                 n_eval += 1
 
         eval_noise_loss /= n_eval
         eval_recon_loss /= n_eval
-        eval_total = eval_noise_loss + LAMBDA_RECON * eval_recon_loss
+        eval_freq_loss  /= n_eval
+        eval_total = eval_noise_loss + LAMBDA_RECON * eval_recon_loss + LAMBDA_FFT * eval_freq_loss
 
         if epoch % 10 == 0 or epoch == 1:
             lr_now = scheduler.get_last_lr()[0]
             print(f"Epoch {epoch:3d}/{EPOCHS} | "
-                  f"train_noise={train_noise_loss:.4f} train_recon={train_recon_loss:.6f} | "
-                  f"eval_noise={eval_noise_loss:.4f} eval_recon={eval_recon_loss:.6f} | "
+                  f"train noise={train_noise_loss:.4f} recon={train_recon_loss:.6f} fft={train_freq_loss:.6f} | "
+                  f"eval noise={eval_noise_loss:.4f} recon={eval_recon_loss:.6f} fft={eval_freq_loss:.6f} | "
                   f"LR={lr_now:.2e}")
 
         ckpt = {
@@ -294,6 +317,7 @@ def main():
             "loss":        eval_total,
             "noise_loss":  eval_noise_loss,
             "recon_loss":  eval_recon_loss,
+            "freq_loss":   eval_freq_loss,
             "T":           T,
             "config": {
                 "n_sensors":   len(SENSOR_NAMES),
@@ -313,7 +337,7 @@ def main():
         if eval_total < best_loss:
             best_loss = eval_total
             torch.save(ckpt, OUT_DIR / "best_model.pt")
-            print(f"  --> New best: noise={eval_noise_loss:.4f} recon={eval_recon_loss:.6f}")
+            print(f"  --> New best: noise={eval_noise_loss:.4f} recon={eval_recon_loss:.6f} fft={eval_freq_loss:.6f}")
 
     print(f"\n{'='*65}")
     print(f"Done. Best eval loss: {best_loss:.6f}")

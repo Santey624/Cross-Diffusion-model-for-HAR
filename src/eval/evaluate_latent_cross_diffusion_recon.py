@@ -47,7 +47,6 @@ VAE_CHECKPOINT  = "checkpoints/sensor_vae_v2/best_model.pt"
 DIFF_DIR        = Path("checkpoints/latent_cross_diffusion_recon")
 
 tag = "state" if USE_STATE else "behavioral"
-CLASSIFIER_CKPT = f"checkpoints/clstm_raw_{tag}/best_model.pt"
 
 if USE_STATE:
     DATA_ROOTS = {"state": "data/cogage/python/arrays/state"}
@@ -57,8 +56,12 @@ else:
         "bbh":  "data/cogage/python/arrays/bbh",
     }
 
-DDIM_STEPS = 25
-BATCH_SIZE = 128
+DDIM_STEPS      = 25
+BATCH_SIZE      = 128
+# Use augmented-vae classifier if available, else fall back to raw
+AUGMENTED_VAE   = "--augmented-vae" in sys.argv
+aug_suffix      = "_augment_vae" if AUGMENTED_VAE else ""
+CLASSIFIER_CKPT = f"checkpoints/clstm_raw_{tag}{aug_suffix}/best_model.pt"
 
 
 # ============================================================
@@ -273,11 +276,14 @@ def main():
                     mus.append(mu)
                 latents = torch.stack(mus, dim=1)   # (B, K, D, T_SHARED)
 
+                # Raw signals for observed sensors (no VAE gap)
+                raw_signals = {
+                    name: sensor_data[name].permute(0, 2, 1)  # (B, C, T)
+                    for name in SENSOR_NAMES
+                }
+
                 if mode == "real":
-                    decoded = {
-                        name: vae.decode_sensor(name, latents[:, i]).permute(0, 2, 1)
-                        for i, name in enumerate(SENSOR_NAMES)
-                    }
+                    decoded = raw_signals
 
                 elif mode == "latdiffr":
                     observed_mask = torch.ones(B, len(SENSOR_NAMES), device=DEVICE)
@@ -288,16 +294,16 @@ def main():
                         diff_model, latents, observed_mask,
                         alpha_bar, T_diff, DDIM_STEPS,
                     )
-                    decoded = {}
-                    for i, name in enumerate(SENSOR_NAMES):
+                    # Observed: raw signals | Missing: VAE-decoded imputed latents
+                    decoded = dict(raw_signals)
+                    for i in missing_idx:
+                        name = SENSOR_NAMES[i]
                         recon = vae.decode_sensor(name, imputed[:, i])  # (B, T, C)
                         decoded[name] = recon.permute(0, 2, 1)           # (B, C, T)
 
                 else:  # mean
-                    decoded = {
-                        name: vae.decode_sensor(name, latents[:, i]).permute(0, 2, 1)
-                        for i, name in enumerate(SENSOR_NAMES)
-                    }
+                    # Observed: raw signals | Missing: mean decoded signal
+                    decoded = dict(raw_signals)
                     for name in missing_sensors:
                         decoded[name] = mean_signals[name].expand(B, -1, -1)
 
