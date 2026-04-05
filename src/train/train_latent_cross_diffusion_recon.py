@@ -61,7 +61,7 @@ NUM_WORKERS = 4
 
 # Loss weights: total = noise_loss + LAMBDA_RECON * recon_loss + LAMBDA_FFT * fft_loss
 LAMBDA_RECON = 1.0
-LAMBDA_FFT   = 0.1
+LAMBDA_FFT   = 0.001
 
 
 # ============================================================
