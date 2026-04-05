@@ -13,6 +13,7 @@
 # Usage:
 #   python -m src.eval.evaluate_signal_cross_diffusion
 #   python -m src.eval.evaluate_signal_cross_diffusion --state
+#   python -m src.eval.evaluate_signal_cross_diffusion --state --augmented-cross
 # ============================================================
 
 import sys
@@ -38,14 +39,16 @@ from src.data.sensor_normalizer import SensorNormalizer
 # ============================================================
 # CONFIG
 # ============================================================
-DEVICE    = "cuda" if torch.cuda.is_available() else "cpu"
-USE_STATE = "--state" in sys.argv
+DEVICE           = "cuda" if torch.cuda.is_available() else "cpu"
+USE_STATE        = "--state"           in sys.argv
+AUGMENTED_CROSS  = "--augmented-cross" in sys.argv
 
 NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
 tag = "state" if USE_STATE else "behavioral"
+aug = "_augment_cross" if AUGMENTED_CROSS else ""
 
 DIFF_DIR        = Path("checkpoints/signal_cross_diffusion")
-CLASSIFIER_CKPT = f"checkpoints/clstm_raw_{tag}/best_model.pt"
+CLASSIFIER_CKPT = f"checkpoints/clstm_raw_{tag}{aug}/best_model.pt"
 
 if USE_STATE:
     DATA_ROOTS = {"state": "data/cogage/python/arrays/state"}
@@ -157,7 +160,7 @@ def compute_metrics(all_labels, all_probs, n_classes):
 def main():
     task = "State (6 classes)" if USE_STATE else "Behavioral (55 classes)"
     print(f"\n{'='*75}")
-    print(f"Signal Cross-Sensor Diffusion Eval (no VAE)  |  C-LSTM-A {task}")
+    print(f"Signal Cross-Sensor Diffusion Eval (no VAE)  |  C-LSTM-A {task}  |  aug_cross={AUGMENTED_CROSS}")
     print(f"{'='*75}\n")
 
     normalizer = SensorNormalizer.load(NORMALIZER_PATH)
@@ -199,7 +202,9 @@ def main():
     print(f"Loading C-LSTM-A (raw) from {CLASSIFIER_CKPT}...")
     if not Path(CLASSIFIER_CKPT).exists():
         print("  NOT FOUND. Train first:")
-        print(f"  python -m src.train.train_clstm_raw{' --state' if USE_STATE else ''}")
+        s = " --state" if USE_STATE else ""
+        a = " --augment-cross" if AUGMENTED_CROSS else ""
+        print(f"  python -m src.train.train_clstm_raw{s}{a}")
         return
     clf_ckpt   = torch.load(CLASSIFIER_CKPT, map_location=DEVICE)
     cfg_clf    = clf_ckpt["config"]

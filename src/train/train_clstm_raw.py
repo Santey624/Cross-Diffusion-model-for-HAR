@@ -5,8 +5,9 @@
 # AdaptiveAvgPool handles different sensor lengths automatically.
 #
 # Flags:
-#   --state    use state dataset (6 classes)
-#   --augment  50% of batches: missing sensors via signal diffusion
+#   --state          use state dataset (6 classes)
+#   --augment        50% of batches: missing sensors via signal class-cond diffusion
+#   --augment-cross  30% of batches: missing sensors via cross-sensor signal diffusion
 # ============================================================
 
 import sys
@@ -23,6 +24,7 @@ from src.models.clstm_classifier import create_clstm_classifier
 from src.models.signal_class_diffusion import (
     create_signal_class_diffusion, SENSOR_T, T_MODEL,
 )
+from src.models.signal_cross_diffusion import create_signal_cross_diffusion, T_COMMON
 from src.models.sensor_vae import SENSOR_NAMES
 from src.data.cogage_labeled_dataset import (
     get_combined_labeled_dataset, CogAgeLabeledDataset,
@@ -33,9 +35,10 @@ from src.data.sensor_normalizer import SensorNormalizer
 # ============================================================
 # CONFIG
 # ============================================================
-DEVICE    = "cuda" if torch.cuda.is_available() else "cpu"
-USE_STATE = "--state"  in sys.argv
-AUGMENT   = "--augment" in sys.argv
+DEVICE         = "cuda" if torch.cuda.is_available() else "cpu"
+USE_STATE      = "--state"         in sys.argv
+AUGMENT        = "--augment"       in sys.argv
+AUGMENT_CROSS  = "--augment-cross" in sys.argv
 
 NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
 tag = "state" if USE_STATE else "behavioral"
@@ -48,15 +51,22 @@ else:
         "bbh":  "data/cogage/python/arrays/bbh",
     }
 
-suffix  = "_augment" if AUGMENT else ""
+if AUGMENT_CROSS:
+    suffix = "_augment_cross"
+elif AUGMENT:
+    suffix = "_augment"
+else:
+    suffix = ""
 OUT_DIR = Path(f"checkpoints/clstm_raw_{tag}{suffix}")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-DIFF_DIR    = Path(f"checkpoints/signal_class_diffusion_{tag}")
+DIFF_DIR       = Path(f"checkpoints/signal_class_diffusion_{tag}")
+CROSS_DIFF_DIR = Path("checkpoints/signal_cross_diffusion")
 BATCH_SIZE  = 32
 EPOCHS      = 100
 LR          = 1e-3
 AUG_PROB    = 0.5
+AUG_PROB_CROSS = 0.3
 DDIM_STEPS  = 10
 NUM_WORKERS = 4
 
@@ -94,6 +104,50 @@ def ddim_sample_signal(model, class_label, sensor_id, alpha_bar, T, ddim_steps,
     return x
 
 
+@torch.no_grad()
+def ddim_impute_cross(model, stacked_norm, observed_mask, alpha_bar, T, ddim_steps):
+    """
+    Cross-sensor DDIM imputation.
+    stacked_norm: (B, K, C, T_COMMON) — normalized, missing=noise
+    observed_mask: (B, K)
+    Returns: (B, K, C, T_COMMON) imputed
+    """
+    B, K, C, T_len = stacked_norm.shape
+    device = stacked_norm.device
+    missing_idx = (observed_mask[0] == 0).nonzero(as_tuple=True)[0].tolist()
+
+    z = stacked_norm.clone()
+    for i in missing_idx:
+        z[:, i] = torch.randn(B, C, T_len, device=device)
+
+    alpha_bar = alpha_bar.to(device)
+    tau = (torch.linspace(0, 1, ddim_steps + 1, device=device) ** 2
+           * (T - 1)).long().flip(0)
+
+    for step in range(len(tau) - 1):
+        t_now, t_next = tau[step], tau[step + 1]
+        t_batch = torch.full((B,), t_now, device=device, dtype=torch.long)
+
+        noisy = stacked_norm.clone()
+        for i in missing_idx:
+            noisy[:, i] = z[:, i]
+
+        noise_pred = model(noisy, t_batch, observed_mask)
+        ab_now  = alpha_bar[t_now]
+        ab_next = alpha_bar[t_next]
+
+        for i in missing_idx:
+            pred_x0 = ((z[:, i] - torch.sqrt(1 - ab_now) * noise_pred[:, i])
+                       / torch.sqrt(ab_now)).clamp(-5, 5)
+            z[:, i] = (torch.sqrt(ab_next) * pred_x0
+                       + torch.sqrt(1 - ab_next) * noise_pred[:, i])
+
+    result = stacked_norm.clone()
+    for i in missing_idx:
+        result[:, i] = z[:, i]
+    return result
+
+
 def prepare_signal(x, target_len):
     """(B, T, C) → (B, C, target_len)"""
     x = x.permute(0, 2, 1).float()
@@ -106,7 +160,7 @@ def prepare_signal(x, target_len):
 def main():
     print(f"\n{'='*65}")
     print(f"Training C-LSTM-A on Raw Signals — {tag}")
-    print(f"Augment: {AUGMENT} | Device: {DEVICE}")
+    print(f"Augment: {AUGMENT} | AugmentCross: {AUGMENT_CROSS} | Device: {DEVICE}")
     print(f"{'='*65}\n")
 
     normalizer = SensorNormalizer.load(NORMALIZER_PATH)
@@ -128,8 +182,11 @@ def main():
 
     # Signal diffusion (only if augmenting)
     diff_model = alpha_bar = T_diff = None
+    cross_diff_model = cross_alpha_bar = T_cross = None
+    cross_norm_mean = cross_norm_std = None
+
     if AUGMENT:
-        print(f"Loading Signal Diffusion from {DIFF_DIR}...")
+        print(f"Loading Signal Class-Cond Diffusion from {DIFF_DIR}...")
         diff_ckpt  = torch.load(DIFF_DIR / "best_model.pt", map_location=DEVICE)
         cfg_diff   = diff_ckpt["config"]
         diff_model = create_signal_class_diffusion(
@@ -147,6 +204,30 @@ def main():
         betas     = cosine_beta_schedule(T_diff)
         alpha_bar = torch.cumprod(1.0 - betas, dim=0)
         print(f"  Loaded (loss={diff_ckpt['loss']:.4f})")
+
+    if AUGMENT_CROSS:
+        print(f"Loading Signal Cross-Sensor Diffusion from {CROSS_DIFF_DIR}...")
+        cross_ckpt = torch.load(CROSS_DIFF_DIR / "best_model.pt", map_location=DEVICE)
+        cfg_cross  = cross_ckpt["config"]
+        cross_diff_model = create_signal_cross_diffusion(
+            n_sensors=cfg_cross["n_sensors"],
+            in_channels=cfg_cross["in_channels"],
+            d_model=cfg_cross["d_model"],
+            num_heads=cfg_cross["num_heads"],
+            num_blocks=cfg_cross["num_blocks"],
+            dropout=0.0,
+        ).to(DEVICE)
+        cross_diff_model.load_state_dict(cross_ckpt["model_state"])
+        cross_diff_model.eval()
+        for p in cross_diff_model.parameters():
+            p.requires_grad = False
+        T_cross     = cross_ckpt["T"]
+        cross_betas = cosine_beta_schedule(T_cross)
+        cross_alpha_bar = torch.cumprod(1.0 - cross_betas, dim=0)
+        norm_stats  = torch.load(CROSS_DIFF_DIR / "normalization_stats.pt", map_location=DEVICE)
+        cross_norm_mean = torch.stack([norm_stats[k]["mean"] for k in SENSOR_NAMES]).to(DEVICE)
+        cross_norm_std  = torch.stack([norm_stats[k]["std"]  for k in SENSOR_NAMES]).to(DEVICE)
+        print(f"  Loaded (loss={cross_ckpt['loss']:.4f})")
 
     # Classifier
     classifier = create_clstm_classifier(
@@ -204,6 +285,43 @@ def main():
                             gen = F.interpolate(gen, size=native_lens[name],
                                                 mode='linear', align_corners=False)
                         signals[name] = gen
+
+            elif AUGMENT_CROSS and random.random() < AUG_PROB_CROSS:
+                n_missing   = random.randint(1, 3)
+                missing     = random.sample(SENSOR_NAMES, n_missing)
+                missing_idx = [SENSOR_NAMES.index(s) for s in missing]
+                with torch.no_grad():
+                    # Stack all signals to (B, K, C, T_COMMON)
+                    parts = []
+                    for name in SENSOR_NAMES:
+                        x = signals[name].float()           # (B, C, T_native)
+                        x = F.interpolate(x, size=T_COMMON, mode='linear', align_corners=False)
+                        parts.append(x)
+                    stacked = torch.stack(parts, dim=1)     # (B, K, C, T_COMMON)
+
+                    # Normalize
+                    stacked_norm = (stacked - cross_norm_mean[None, :, :, None]) \
+                                 / cross_norm_std[None, :, :, None]
+
+                    observed_mask = torch.ones(B, len(SENSOR_NAMES), device=DEVICE)
+                    for i in missing_idx:
+                        observed_mask[:, i] = 0.0
+
+                    imputed_norm = ddim_impute_cross(
+                        cross_diff_model, stacked_norm, observed_mask,
+                        cross_alpha_bar, T_cross, DDIM_STEPS,
+                    )
+                    # Denormalize
+                    imputed = imputed_norm * cross_norm_std[None, :, :, None] \
+                            + cross_norm_mean[None, :, :, None]
+
+                    for i in missing_idx:
+                        name = SENSOR_NAMES[i]
+                        gen  = imputed[:, i]   # (B, C, T_COMMON)
+                        signals[name] = F.interpolate(
+                            gen, size=native_lens[name],
+                            mode='linear', align_corners=False,
+                        )
 
             logits = classifier(signals, SENSOR_NAMES)
             loss   = criterion(logits, labels)
