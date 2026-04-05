@@ -59,7 +59,7 @@ else:
     }
 
 NATIVE_LENS = {name: SENSOR_SPECS[name]["seq_len"] for name in SENSOR_NAMES}
-DDIM_STEPS  = 10
+DDIM_STEPS  = 25
 BATCH_SIZE  = 32
 
 
