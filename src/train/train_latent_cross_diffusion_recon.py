@@ -175,12 +175,12 @@ def main():
             # Add noise to missing latents only
             t_step = torch.randint(0, T, (B,), device=DEVICE)
             noise  = torch.randn_like(latents)
-            ab     = alpha_bar[t_step][:, None, None, None]   # (B, 1, 1, 1)
+            ab3    = alpha_bar[t_step][:, None, None]   # (B, 1, 1) for per-sensor (B, D, T) slices
 
             noisy = latents.clone()
             for i in missing_idx:
-                noisy[:, i] = (torch.sqrt(ab) * latents[:, i]
-                               + torch.sqrt(1 - ab) * noise[:, i])
+                noisy[:, i] = (torch.sqrt(ab3) * latents[:, i]
+                               + torch.sqrt(1 - ab3) * noise[:, i])
 
             # Predict noise
             noise_pred = model(noisy, t_step, observed_mask)  # (B, K, D, T_SHARED)
@@ -197,8 +197,8 @@ def main():
             recon_loss = torch.tensor(0.0, device=DEVICE)
             for i in missing_idx:
                 # z0_pred: (B, D, T_SHARED)
-                z0_pred = ((noisy[:, i] - torch.sqrt(1 - ab[:, 0]) * noise_pred[:, i])
-                           / torch.sqrt(ab[:, 0])).clamp(-10, 10)
+                z0_pred = ((noisy[:, i] - torch.sqrt(1 - ab3) * noise_pred[:, i])
+                           / torch.sqrt(ab3)).clamp(-10, 10)
                 name    = SENSOR_NAMES[i]
                 recon   = vae.decode_sensor(name, z0_pred)   # (B, T, C)
                 target  = sensor_data[name]                   # (B, T, C)
@@ -249,12 +249,12 @@ def main():
 
                 t_step = torch.randint(0, T, (B,), device=DEVICE)
                 noise  = torch.randn_like(latents)
-                ab     = alpha_bar[t_step][:, None, None, None]
+                ab3    = alpha_bar[t_step][:, None, None]   # (B, 1, 1)
 
                 noisy = latents.clone()
                 for i in missing_idx:
-                    noisy[:, i] = (torch.sqrt(ab) * latents[:, i]
-                                   + torch.sqrt(1 - ab) * noise[:, i])
+                    noisy[:, i] = (torch.sqrt(ab3) * latents[:, i]
+                                   + torch.sqrt(1 - ab3) * noise[:, i])
 
                 noise_pred = model(noisy, t_step, observed_mask)
 
@@ -265,8 +265,8 @@ def main():
 
                 recon_loss = torch.tensor(0.0, device=DEVICE)
                 for i in missing_idx:
-                    z0_pred = ((noisy[:, i] - torch.sqrt(1 - ab[:, 0]) * noise_pred[:, i])
-                               / torch.sqrt(ab[:, 0])).clamp(-10, 10)
+                    z0_pred = ((noisy[:, i] - torch.sqrt(1 - ab3) * noise_pred[:, i])
+                               / torch.sqrt(ab3)).clamp(-10, 10)
                     name   = SENSOR_NAMES[i]
                     recon  = vae.decode_sensor(name, z0_pred)
                     target = sensor_data[name]
