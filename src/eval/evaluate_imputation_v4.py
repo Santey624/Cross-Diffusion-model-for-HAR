@@ -52,7 +52,7 @@ else:
         "bbh":  "data/cogage/python/arrays/bbh",
     }
 
-BATCH_SIZE = 32
+BATCH_SIZE = 128
 
 
 # ============================================================
@@ -99,8 +99,8 @@ def main():
         train_ds  = get_combined_labeled_dataset(DATA_ROOTS, "training", normalizer)
     n_classes = test_ds.n_classes
 
-    test_loader  = DataLoader(test_ds,  batch_size=BATCH_SIZE, shuffle=False, num_workers=1)
-    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=1)
+    test_loader  = DataLoader(test_ds,  batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
     print(f"  Test samples: {len(test_ds)}, Classes: {n_classes}")
 
     # VAE V4
