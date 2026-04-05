@@ -168,7 +168,7 @@ def main():
     else:
         test_ds   = get_combined_labeled_dataset(DATA_ROOTS, "testing", normalizer)
         n_classes = test_ds.n_classes
-    test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
+    test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=1)
     print(f"  Test samples: {len(test_ds)}, Classes: {n_classes}")
 
     # VAE V2

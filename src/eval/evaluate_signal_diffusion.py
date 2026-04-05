@@ -139,8 +139,8 @@ def main():
         train_ds = get_combined_labeled_dataset(DATA_ROOTS, "training", normalizer)
     n_classes = test_ds.n_classes
 
-    test_loader  = DataLoader(test_ds,  batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
-    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
+    test_loader  = DataLoader(test_ds,  batch_size=BATCH_SIZE, shuffle=False, num_workers=1)
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=1)
 
     # Signal Diffusion
     print(f"Loading Signal Diffusion from {DIFF_DIR}...")
