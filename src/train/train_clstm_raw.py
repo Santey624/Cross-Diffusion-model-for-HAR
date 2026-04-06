@@ -5,10 +5,11 @@
 # AdaptiveAvgPool handles different sensor lengths automatically.
 #
 # Flags:
-#   --state          use state dataset (6 classes)
-#   --augment        50% of batches: missing sensors via signal class-cond diffusion
-#   --augment-cross  30% of batches: missing sensors via cross-sensor signal diffusion
-#   --augment-vae    50% of batches: random sensors replaced by VAE encode→decode
+#   --state               use state dataset (6 classes)
+#   --augment             50% of batches: missing sensors via signal class-cond diffusion
+#   --augment-cross       30% of batches: missing sensors via cross-sensor signal diffusion
+#   --augment-cross-recon 30% of batches: missing sensors via cross-sensor signal diffusion (recon-trained)
+#   --augment-vae         50% of batches: random sensors replaced by VAE encode→decode
 # ============================================================
 
 import sys
@@ -39,8 +40,9 @@ from src.data.sensor_normalizer import SensorNormalizer
 DEVICE         = "cuda" if torch.cuda.is_available() else "cpu"
 USE_STATE      = "--state"         in sys.argv
 AUGMENT        = "--augment"       in sys.argv
-AUGMENT_CROSS  = "--augment-cross" in sys.argv
-AUGMENT_VAE    = "--augment-vae"   in sys.argv
+AUGMENT_CROSS       = "--augment-cross"       in sys.argv
+AUGMENT_CROSS_RECON = "--augment-cross-recon" in sys.argv
+AUGMENT_VAE         = "--augment-vae"         in sys.argv
 
 NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
 tag = "state" if USE_STATE else "behavioral"
@@ -53,7 +55,9 @@ else:
         "bbh":  "data/cogage/python/arrays/bbh",
     }
 
-if AUGMENT_CROSS:
+if AUGMENT_CROSS_RECON:
+    suffix = "_augment_cross_recon"
+elif AUGMENT_CROSS:
     suffix = "_augment_cross"
 elif AUGMENT_VAE:
     suffix = "_augment_vae"
@@ -65,7 +69,8 @@ OUT_DIR = Path(f"checkpoints/clstm_raw_{tag}{suffix}")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 DIFF_DIR       = Path(f"checkpoints/signal_class_diffusion_{tag}")
-CROSS_DIFF_DIR = Path("checkpoints/signal_cross_diffusion")
+CROSS_DIFF_DIR      = Path("checkpoints/signal_cross_diffusion")
+CROSS_DIFF_RECON_DIR = Path("checkpoints/signal_cross_diffusion_recon")
 VAE_CKPT       = "checkpoints/sensor_vae_v2/best_model.pt"
 BATCH_SIZE     = 32
 EPOCHS         = 100
@@ -227,9 +232,10 @@ def main():
             p.requires_grad = False
         print(f"  Loaded (frozen)")
 
-    if AUGMENT_CROSS:
-        print(f"Loading Signal Cross-Sensor Diffusion from {CROSS_DIFF_DIR}...")
-        cross_ckpt = torch.load(CROSS_DIFF_DIR / "best_model.pt", map_location=DEVICE)
+    if AUGMENT_CROSS or AUGMENT_CROSS_RECON:
+        _cross_dir = CROSS_DIFF_RECON_DIR if AUGMENT_CROSS_RECON else CROSS_DIFF_DIR
+        print(f"Loading Signal Cross-Sensor Diffusion from {_cross_dir}...")
+        cross_ckpt = torch.load(_cross_dir / "best_model.pt", map_location=DEVICE)
         cfg_cross  = cross_ckpt["config"]
         cross_diff_model = create_signal_cross_diffusion(
             n_sensors=cfg_cross["n_sensors"],
@@ -246,7 +252,7 @@ def main():
         T_cross     = cross_ckpt["T"]
         cross_betas = cosine_beta_schedule(T_cross)
         cross_alpha_bar = torch.cumprod(1.0 - cross_betas, dim=0)
-        norm_stats  = torch.load(CROSS_DIFF_DIR / "normalization_stats.pt", map_location=DEVICE)
+        norm_stats  = torch.load(_cross_dir / "normalization_stats.pt", map_location=DEVICE)
         cross_norm_mean = torch.stack([norm_stats[k]["mean"] for k in SENSOR_NAMES]).to(DEVICE)
         cross_norm_std  = torch.stack([norm_stats[k]["std"]  for k in SENSOR_NAMES]).to(DEVICE)
         print(f"  Loaded (loss={cross_ckpt['loss']:.4f})")
@@ -308,7 +314,7 @@ def main():
                                                 mode='linear', align_corners=False)
                         signals[name] = gen
 
-            elif AUGMENT_CROSS and random.random() < AUG_PROB_CROSS:
+            elif (AUGMENT_CROSS or AUGMENT_CROSS_RECON) and random.random() < AUG_PROB_CROSS:
                 n_missing   = random.randint(1, 3)
                 missing     = random.sample(SENSOR_NAMES, n_missing)
                 missing_idx = [SENSOR_NAMES.index(s) for s in missing]
