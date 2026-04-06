@@ -247,20 +247,33 @@ def main():
     # ============================================================
     scenarios = {
         "all_real":               ([], "real"),
-        "phone_acc+crossdiff":    (["phone_acc"], "crossdiff"),
-        "phone_acc+mean":         (["phone_acc"], "mean"),
-        "watch_acc+crossdiff":    (["watch_acc"], "crossdiff"),
-        "watch_acc+mean":         (["watch_acc"], "mean"),
+        # Single sensor missing
+        "phone_acc+crossdiff":    (["phone_acc"],   "crossdiff"),
+        "phone_acc+mean":         (["phone_acc"],   "mean"),
+        "phone_gyro+crossdiff":   (["phone_gyro"],  "crossdiff"),
+        "phone_gyro+mean":        (["phone_gyro"],  "mean"),
+        "phone_grav+crossdiff":   (["phone_grav"],  "crossdiff"),
+        "phone_grav+mean":        (["phone_grav"],  "mean"),
+        "phone_lacc+crossdiff":   (["phone_lacc"],  "crossdiff"),
+        "phone_lacc+mean":        (["phone_lacc"],  "mean"),
+        "watch_acc+crossdiff":    (["watch_acc"],   "crossdiff"),
+        "watch_acc+mean":         (["watch_acc"],   "mean"),
+        "watch_gyro+crossdiff":   (["watch_gyro"],  "crossdiff"),
+        "watch_gyro+mean":        (["watch_gyro"],  "mean"),
         "glasses_acc+crossdiff":  (["glasses_acc"], "crossdiff"),
         "glasses_acc+mean":       (["glasses_acc"], "mean"),
+        # Device-level missing
         "phone_all+crossdiff":    (["phone_acc","phone_gyro","phone_grav","phone_lacc"], "crossdiff"),
         "phone_all+mean":         (["phone_acc","phone_gyro","phone_grav","phone_lacc"], "mean"),
         "watch_all+crossdiff":    (["watch_acc","watch_gyro"], "crossdiff"),
         "watch_all+mean":         (["watch_acc","watch_gyro"], "mean"),
+        # Only one device available
         "only_watch+crossdiff":   (["phone_acc","phone_gyro","phone_grav","phone_lacc","glasses_acc"], "crossdiff"),
         "only_watch+mean":        (["phone_acc","phone_gyro","phone_grav","phone_lacc","glasses_acc"], "mean"),
         "only_phone+crossdiff":   (["watch_acc","watch_gyro","glasses_acc"], "crossdiff"),
         "only_phone+mean":        (["watch_acc","watch_gyro","glasses_acc"], "mean"),
+        "only_glasses+crossdiff": (["phone_acc","phone_gyro","phone_grav","phone_lacc","watch_acc","watch_gyro"], "crossdiff"),
+        "only_glasses+mean":      (["phone_acc","phone_gyro","phone_grav","phone_lacc","watch_acc","watch_gyro"], "mean"),
     }
 
     results = {}
@@ -333,13 +346,21 @@ def main():
               f"{m['map']:>7.4f} {m['auc']:>7.4f}")
 
     groups = [
-        ("phone_acc",  ["phone_acc"]),
-        ("watch_acc",  ["watch_acc"]),
-        ("glasses_acc",["glasses_acc"]),
-        ("phone_all",  ["phone_acc","phone_gyro","phone_grav","phone_lacc"]),
-        ("watch_all",  ["watch_acc","watch_gyro"]),
-        ("only_watch", ["phone_acc","phone_gyro","phone_grav","phone_lacc","glasses_acc"]),
-        ("only_phone", ["watch_acc","watch_gyro","glasses_acc"]),
+        # Single sensors
+        ("phone_acc",    ["phone_acc"]),
+        ("phone_gyro",   ["phone_gyro"]),
+        ("phone_grav",   ["phone_grav"]),
+        ("phone_lacc",   ["phone_lacc"]),
+        ("watch_acc",    ["watch_acc"]),
+        ("watch_gyro",   ["watch_gyro"]),
+        ("glasses_acc",  ["glasses_acc"]),
+        # Device-level
+        ("phone_all",    ["phone_acc","phone_gyro","phone_grav","phone_lacc"]),
+        ("watch_all",    ["watch_acc","watch_gyro"]),
+        # Only one device available
+        ("only_watch",   ["phone_acc","phone_gyro","phone_grav","phone_lacc","glasses_acc"]),
+        ("only_phone",   ["watch_acc","watch_gyro","glasses_acc"]),
+        ("only_glasses", ["phone_acc","phone_gyro","phone_grav","phone_lacc","watch_acc","watch_gyro"]),
     ]
 
     real = results.get("all_real", {})
@@ -348,19 +369,23 @@ def main():
     print(f"\n{'='*100}")
     print("  COMPARISON: Signal Cross-Sensor Diffusion vs Mean-Fill  (Acc / AF1)")
     print(f"{'='*100}")
-    print(f"  {'Pattern':<14} {'Baseline':>14} {'CrossDiff':>14} {'Mean-Fill':>14}   Winner")
-    print("  " + "-" * 72)
-    print(f"  {'all_real':<14} {fmt(real):>14}")
+    print(f"  {'Pattern':<16} {'Baseline':>14} {'CrossDiff':>14} {'Mean-Fill':>14}   Winner")
+    print("  " + "-" * 74)
+    print(f"  {'all_real':<16} {fmt(real):>14}")
 
+    cd_wins = 0
     for pat, _ in groups:
         d = results.get(f"{pat}+crossdiff")
         m = results.get(f"{pat}+mean")
         candidates = {k: val["acc"] for k, val in [("CrossDiff", d), ("Mean", m)] if val}
         winner = max(candidates, key=candidates.get) if candidates else "—"
+        if winner == "CrossDiff":
+            cd_wins += 1
         delta  = f"  Δ={d['acc']-m['acc']:+.3f}" if d and m else ""
-        print(f"  {pat:<14} {fmt(real):>14} {fmt(d):>14} {fmt(m):>14}   → {winner}{delta}")
+        print(f"  {pat:<16} {fmt(real):>14} {fmt(d):>14} {fmt(m):>14}   → {winner}{delta}")
 
-    print(f"\n{'='*100}\n")
+    print(f"\n  CrossDiff wins: {cd_wins}/{len(groups)}")
+    print(f"{'='*100}\n")
 
 
 if __name__ == "__main__":
