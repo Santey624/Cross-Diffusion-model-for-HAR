@@ -41,12 +41,18 @@ from src.data.sensor_normalizer import SensorNormalizer
 # ============================================================
 DEVICE           = "cuda" if torch.cuda.is_available() else "cpu"
 USE_STATE        = "--state"           in sys.argv
-AUGMENTED_CROSS  = "--augmented-cross" in sys.argv
-USE_RECON        = "--recon"           in sys.argv
+AUGMENTED_CROSS       = "--augmented-cross"       in sys.argv
+AUGMENTED_CROSS_RECON = "--augmented-cross-recon" in sys.argv
+USE_RECON             = "--recon"                 in sys.argv
 
 NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
 tag = "state" if USE_STATE else "behavioral"
-aug = "_augment_cross" if AUGMENTED_CROSS else ""
+if AUGMENTED_CROSS_RECON:
+    aug = "_augment_cross_recon"
+elif AUGMENTED_CROSS:
+    aug = "_augment_cross"
+else:
+    aug = ""
 
 DIFF_DIR        = Path("checkpoints/signal_cross_diffusion_recon" if USE_RECON
                        else "checkpoints/signal_cross_diffusion")
