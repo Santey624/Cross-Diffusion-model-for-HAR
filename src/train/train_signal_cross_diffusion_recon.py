@@ -45,7 +45,7 @@ COGAGE_ROOTS = {
     "state": "data/cogage/python/arrays/state",
 }
 
-OUT_DIR = Path("checkpoints/signal_cross_diffusion_recon_v2")
+OUT_DIR = Path("checkpoints/signal_cross_diffusion_recon_v3")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 T          = 1000
@@ -72,7 +72,7 @@ DEVICE_GROUPS = {
 # 0.25 → single sensor missing
 # 0.40 → random 2-3 sensors missing
 P_DEVICE  = 0.35
-P_SINGLE  = 0.25
+P_SINGLE  = 0.40
 # rest = random 2-3
 
 LAMBDA_RECON = 1.0

@@ -43,6 +43,7 @@ AUGMENT        = "--augment"       in sys.argv
 AUGMENT_CROSS       = "--augment-cross"       in sys.argv
 AUGMENT_CROSS_RECON = "--augment-cross-recon" in sys.argv
 AUGMENT_VAE         = "--augment-vae"         in sys.argv
+USE_MAXPOOL         = "--maxpool"             in sys.argv
 
 NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
 tag = "state" if USE_STATE else "behavioral"
@@ -65,6 +66,8 @@ elif AUGMENT:
     suffix = "_augment"
 else:
     suffix = ""
+if USE_MAXPOOL:
+    suffix += "_maxpool"
 OUT_DIR = Path(f"checkpoints/clstm_raw_{tag}{suffix}")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 

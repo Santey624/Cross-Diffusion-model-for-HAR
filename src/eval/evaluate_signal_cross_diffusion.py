@@ -55,7 +55,9 @@ else:
     aug = ""
 
 USE_RECON_V2 = "--recon-v2" in sys.argv
+USE_RECON_V3 = "--recon-v3" in sys.argv
 DIFF_DIR     = Path(
+    "checkpoints/signal_cross_diffusion_recon_v3" if USE_RECON_V3 else
     "checkpoints/signal_cross_diffusion_recon_v2" if USE_RECON_V2 else
     "checkpoints/signal_cross_diffusion_recon"    if USE_RECON else
     "checkpoints/signal_cross_diffusion"
