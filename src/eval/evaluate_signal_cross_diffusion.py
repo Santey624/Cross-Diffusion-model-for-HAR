@@ -54,8 +54,12 @@ elif AUGMENTED_CROSS:
 else:
     aug = ""
 
-DIFF_DIR        = Path("checkpoints/signal_cross_diffusion_recon" if USE_RECON
-                       else "checkpoints/signal_cross_diffusion")
+USE_RECON_V2 = "--recon-v2" in sys.argv
+DIFF_DIR     = Path(
+    "checkpoints/signal_cross_diffusion_recon_v2" if USE_RECON_V2 else
+    "checkpoints/signal_cross_diffusion_recon"    if USE_RECON else
+    "checkpoints/signal_cross_diffusion"
+)
 CLASSIFIER_CKPT = f"checkpoints/clstm_raw_{tag}{aug}/best_model.pt"
 
 if USE_STATE:

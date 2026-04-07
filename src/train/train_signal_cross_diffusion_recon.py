@@ -45,7 +45,7 @@ COGAGE_ROOTS = {
     "state": "data/cogage/python/arrays/state",
 }
 
-OUT_DIR = Path("checkpoints/signal_cross_diffusion_recon")
+OUT_DIR = Path("checkpoints/signal_cross_diffusion_recon_v2")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 T          = 1000
@@ -59,9 +59,21 @@ NUM_HEADS  = 4
 NUM_BLOCKS = 6
 DROPOUT    = 0.1
 
-MIN_MISSING = 1
-MAX_MISSING = 3
 NUM_WORKERS = 4
+
+# Device groups for realistic missing patterns
+DEVICE_GROUPS = {
+    "phone":   ["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"],
+    "watch":   ["watch_acc", "watch_gyro"],
+    "glasses": ["glasses_acc"],
+}
+# Sampling probabilities:
+# 0.35 → full device missing
+# 0.25 → single sensor missing
+# 0.40 → random 2-3 sensors missing
+P_DEVICE  = 0.35
+P_SINGLE  = 0.25
+# rest = random 2-3
 
 LAMBDA_RECON = 1.0
 LAMBDA_FFT   = 0.001
@@ -76,6 +88,25 @@ def cosine_beta_schedule(T, s=0.008):
     alpha_bar = f_t / f_t[0]
     betas = 1 - (alpha_bar[1:] / alpha_bar[:-1])
     return torch.clamp(betas, 1e-6, 0.999).float()
+
+
+# ============================================================
+# Realistic missing pattern sampling
+# ============================================================
+def sample_missing_idx():
+    """Returns list of sensor indices to mask."""
+    p = random.random()
+    if p < P_DEVICE:
+        # Full device missing
+        device = random.choice(list(DEVICE_GROUPS.keys()))
+        missing = DEVICE_GROUPS[device]
+    elif p < P_DEVICE + P_SINGLE:
+        # Single random sensor
+        missing = [random.choice(SENSOR_NAMES)]
+    else:
+        # Random 2-3 sensors
+        missing = random.sample(SENSOR_NAMES, random.randint(2, 3))
+    return [SENSOR_NAMES.index(s) for s in missing]
 
 
 # ============================================================
@@ -200,8 +231,7 @@ def main():
             stacked_norm = (stacked - norm_mean[None, :, :, None]) \
                          / norm_std[None, :, :, None]
 
-            n_missing   = random.randint(MIN_MISSING, MAX_MISSING)
-            missing_idx = random.sample(range(K), n_missing)
+            missing_idx   = sample_missing_idx()
             observed_mask = torch.ones(B, K, device=DEVICE)
             for i in missing_idx:
                 observed_mask[:, i] = 0.0
@@ -263,8 +293,7 @@ def main():
                              / norm_std[None, :, :, None]
                 B = stacked.shape[0]
 
-                n_missing   = random.randint(MIN_MISSING, MAX_MISSING)
-                missing_idx = random.sample(range(len(SENSOR_NAMES)), n_missing)
+                missing_idx   = sample_missing_idx()
                 observed_mask = torch.ones(B, len(SENSOR_NAMES), device=DEVICE)
                 for i in missing_idx:
                     observed_mask[:, i] = 0.0
