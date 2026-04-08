@@ -28,7 +28,6 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import seaborn as sns
 from sklearn.metrics import confusion_matrix
 
 from src.models.clstm_classifier import create_clstm_classifier
@@ -302,12 +301,17 @@ def main():
         cm_norm = cm.astype(float) / cm.sum(axis=1, keepdims=True).clip(min=1)
 
         fig, ax = plt.subplots(figsize=(8, 7))
-        sns.heatmap(
-            cm_norm, annot=True, fmt=".2f",
-            xticklabels=class_names, yticklabels=class_names,
-            cmap="Blues", ax=ax, linewidths=0.5,
-            vmin=0, vmax=1,
-        )
+        im = ax.imshow(cm_norm, cmap="Blues", vmin=0, vmax=1)
+        plt.colorbar(im, ax=ax)
+        ax.set_xticks(range(n_classes))
+        ax.set_yticks(range(n_classes))
+        ax.set_xticklabels(class_names, rotation=45, ha="right", fontsize=9)
+        ax.set_yticklabels(class_names, fontsize=9)
+        for i in range(n_classes):
+            for j in range(n_classes):
+                val = cm_norm[i, j]
+                ax.text(j, i, f"{val:.2f}", ha="center", va="center",
+                        fontsize=8, color="white" if val > 0.5 else "black")
         ax.set_xlabel("Predicted", fontsize=12)
         ax.set_ylabel("True",      fontsize=12)
         ax.set_title(f"State Confusion Matrix — {scenario_str}  (acc={acc:.3f})", fontsize=13)
@@ -324,11 +328,10 @@ def main():
         # --- heatmap (row-normalised) ---
         cm_norm = cm.astype(float) / cm.sum(axis=1, keepdims=True).clip(min=1)
         fig, ax = plt.subplots(figsize=(18, 16))
-        sns.heatmap(
-            cm_norm, cmap="Blues", ax=ax,
-            xticklabels=False, yticklabels=False,
-            vmin=0, vmax=1,
-        )
+        im = ax.imshow(cm_norm, cmap="Blues", vmin=0, vmax=1)
+        plt.colorbar(im, ax=ax)
+        ax.set_xticks([])
+        ax.set_yticks([])
         ax.set_xlabel("Predicted", fontsize=12)
         ax.set_ylabel("True",      fontsize=12)
         ax.set_title(f"Behavioral Confusion Matrix ({n_classes} classes) — {scenario_str}  (acc={acc:.3f})", fontsize=13)
