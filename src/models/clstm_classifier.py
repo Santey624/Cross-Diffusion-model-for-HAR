@@ -28,22 +28,19 @@ class SensorBranch(nn.Module):
             nn.ReLU(),
             nn.MaxPool1d(2),
         )
-        self.avg_pool = nn.AdaptiveAvgPool1d(pool_size)
-        self.max_pool = nn.AdaptiveMaxPool1d(pool_size)
-        # BiLSTM: input = cnn_channels*2 * 2 (avg+max concatenated)
+        self.pool = nn.AdaptiveAvgPool1d(pool_size)
+        # BiLSTM: out_dim = lstm_hidden * 2
         self.lstm = nn.LSTM(
-            cnn_channels * 4, lstm_hidden,
+            cnn_channels * 2, lstm_hidden,
             batch_first=True, bidirectional=True,
         )
         self.out_dim = lstm_hidden * 2
 
     def forward(self, x):
         """x: (B, C, T) -> (B, out_dim)"""
-        h = self.cnn(x)                          # (B, cnn_ch*2, T//4)
-        h_avg = self.avg_pool(h)                 # (B, cnn_ch*2, pool_size)
-        h_max = self.max_pool(h)                 # (B, cnn_ch*2, pool_size)
-        h = torch.cat([h_avg, h_max], dim=1)     # (B, cnn_ch*4, pool_size)
-        h = h.permute(0, 2, 1)                   # (B, pool_size, cnn_ch*4)
+        h = self.cnn(x)           # (B, cnn_ch*2, T//4)
+        h = self.pool(h)          # (B, cnn_ch*2, pool_size)
+        h = h.permute(0, 2, 1)   # (B, pool_size, cnn_ch*2)
         _, (hidden, _) = self.lstm(h)
         return torch.cat([hidden[0], hidden[1]], dim=1)  # (B, out_dim)
 
