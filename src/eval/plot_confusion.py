@@ -171,25 +171,28 @@ def collect_preds(test_loader, classifier, diff_model, alpha_bar,
         stacked_norm = (stacked - norm_mean[None, :, :, None]) \
                      / norm_std[None, :, :, None]
 
+        # Start with raw signals at native lengths (no interpolation degradation)
+        signals_dict = {
+            name: batch[name].to(DEVICE).permute(0, 2, 1).float()
+            for name in SENSOR_NAMES
+        }
+
         if use_diffusion:
             observed_mask = torch.ones(B, K, device=DEVICE)
             for i in missing_idx:
                 observed_mask[:, i] = 0.0
             imputed = ddim_impute(diff_model, stacked_norm, observed_mask,
                                   alpha_bar, diff_model_T, DDIM_STEPS)
-            # Denormalize
             imputed_denorm = imputed * norm_std[None, :, :, None] \
                            + norm_mean[None, :, :, None]
-        else:
-            imputed_denorm = stacked  # use raw
-
-        # Resize back to native lengths for each sensor
-        signals_dict = {}
-        for ki, name in enumerate(SENSOR_NAMES):
-            native_len = SENSOR_SPECS[name]["seq_len"]
-            sig = imputed_denorm[:, ki]   # (B, C, T_COMMON)
-            sig = F.interpolate(sig, size=native_len, mode='linear', align_corners=False)
-            signals_dict[name] = sig
+            # Only replace missing sensors
+            for i in missing_idx:
+                name = SENSOR_NAMES[i]
+                native_len = SENSOR_SPECS[name]["seq_len"]
+                signals_dict[name] = F.interpolate(
+                    imputed_denorm[:, i], size=native_len,
+                    mode='linear', align_corners=False,
+                )
 
         logits = classifier(signals_dict, SENSOR_NAMES)
         preds  = logits.argmax(dim=1).cpu().numpy()
