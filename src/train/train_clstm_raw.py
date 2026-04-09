@@ -10,6 +10,7 @@
 #   --augment-cross       30% of batches: missing sensors via cross-sensor signal diffusion
 #   --augment-cross-recon 30% of batches: missing sensors via cross-sensor signal diffusion (recon-trained)
 #   --augment-vae         50% of batches: random sensors replaced by VAE encode→decode
+#   --tcommon             resample ALL sensors to T_COMMON=256 (no native lengths)
 # ============================================================
 
 import sys
@@ -44,6 +45,7 @@ AUGMENT_CROSS       = "--augment-cross"       in sys.argv
 AUGMENT_CROSS_RECON = "--augment-cross-recon" in sys.argv
 AUGMENT_VAE         = "--augment-vae"         in sys.argv
 USE_MAXPOOL         = "--maxpool"             in sys.argv
+USE_TCOMMON         = "--tcommon"             in sys.argv
 
 NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
 tag = "state" if USE_STATE else "behavioral"
@@ -68,6 +70,8 @@ else:
     suffix = ""
 if USE_MAXPOOL:
     suffix += "_maxpool"
+if USE_TCOMMON:
+    suffix += "_tcommon"
 OUT_DIR = Path(f"checkpoints/clstm_raw_{tag}{suffix}")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -292,11 +296,13 @@ def main():
             labels = batch["label"].to(DEVICE)
             B      = labels.size(0)
 
-            # Build decoded dict: (B, C, T_native) for each sensor
+            # Build signal dict: (B, C, T) for each sensor
             signals = {}
             for name in SENSOR_NAMES:
-                x = batch[name].to(DEVICE)         # (B, T, C)
-                signals[name] = x.permute(0, 2, 1) # (B, C, T)
+                x = batch[name].to(DEVICE).permute(0, 2, 1).float()  # (B, C, T_native)
+                if USE_TCOMMON:
+                    x = F.interpolate(x, size=T_COMMON, mode='linear', align_corners=False)
+                signals[name] = x
 
             if AUGMENT and random.random() < AUG_PROB:
                 n_missing  = random.randint(1, 3)
@@ -349,10 +355,13 @@ def main():
                     for i in missing_idx:
                         name = SENSOR_NAMES[i]
                         gen  = imputed[:, i]   # (B, C, T_COMMON)
-                        signals[name] = F.interpolate(
-                            gen, size=native_lens[name],
-                            mode='linear', align_corners=False,
-                        )
+                        if USE_TCOMMON:
+                            signals[name] = gen
+                        else:
+                            signals[name] = F.interpolate(
+                                gen, size=native_lens[name],
+                                mode='linear', align_corners=False,
+                            )
 
             elif AUGMENT_VAE and random.random() < AUG_PROB_VAE:
                 n_replace = random.randint(1, 3)
@@ -380,10 +389,12 @@ def main():
         with torch.no_grad():
             for batch in test_loader:
                 labels  = batch["label"].to(DEVICE)
-                signals = {
-                    name: batch[name].to(DEVICE).permute(0, 2, 1)
-                    for name in SENSOR_NAMES
-                }
+                signals = {}
+                for name in SENSOR_NAMES:
+                    x = batch[name].to(DEVICE).permute(0, 2, 1).float()
+                    if USE_TCOMMON:
+                        x = F.interpolate(x, size=T_COMMON, mode='linear', align_corners=False)
+                    signals[name] = x
                 preds = classifier(signals, SENSOR_NAMES).argmax(dim=1)
                 correct += (preds == labels).sum().item()
                 total   += labels.size(0)

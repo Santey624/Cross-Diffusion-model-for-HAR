@@ -56,13 +56,15 @@ else:
 
 USE_RECON_V2 = "--recon-v2" in sys.argv
 USE_RECON_V3 = "--recon-v3" in sys.argv
+USE_TCOMMON  = "--tcommon"  in sys.argv
 DIFF_DIR     = Path(
     "checkpoints/signal_cross_diffusion_recon_v3" if USE_RECON_V3 else
     "checkpoints/signal_cross_diffusion_recon_v2" if USE_RECON_V2 else
     "checkpoints/signal_cross_diffusion_recon"    if USE_RECON else
     "checkpoints/signal_cross_diffusion"
 )
-CLASSIFIER_CKPT = f"checkpoints/clstm_raw_{tag}{aug}/best_model.pt"
+tcommon_suffix = "_tcommon" if USE_TCOMMON else ""
+CLASSIFIER_CKPT = f"checkpoints/clstm_raw_{tag}{aug}{tcommon_suffix}/best_model.pt"
 
 if USE_STATE:
     DATA_ROOTS = {"state": "data/cogage/python/arrays/state"}
@@ -292,17 +294,20 @@ def main():
         for batch in tqdm(test_loader, desc=f"{scenario_name:<28}", leave=False):
             labels  = batch["label"].to(DEVICE)
             B       = labels.size(0)
-            signals = {
-                name: batch[name].to(DEVICE).permute(0, 2, 1).float()
-                for name in SENSOR_NAMES
-            }
+
+            # Build signal dict — native lengths or T_COMMON depending on flag
+            signals = {}
+            for name in SENSOR_NAMES:
+                x = batch[name].to(DEVICE).permute(0, 2, 1).float()
+                if USE_TCOMMON:
+                    x = F.interpolate(x, size=T_COMMON, mode='linear', align_corners=False)
+                signals[name] = x
 
             with torch.no_grad():
                 if mode == "real":
                     pass
 
                 elif mode == "crossdiff":
-                    # Normalize → stack → diffusion impute → denormalize → native len
                     stacked = stack_signals(batch, DEVICE)   # (B, K, C, T_COMMON)
                     stacked_norm = (stacked - norm_mean[None, :, :, None]) \
                                  / norm_std[None, :, :, None]
@@ -315,21 +320,28 @@ def main():
                         diff_model, stacked_norm, observed_mask,
                         alpha_bar, T_diff, DDIM_STEPS,
                     )
-                    # Denormalize and resize back to native lengths
                     imputed = imputed_norm * norm_std[None, :, :, None] \
                             + norm_mean[None, :, :, None]
 
                     for i in missing_idx:
                         name = SENSOR_NAMES[i]
                         gen  = imputed[:, i]   # (B, C, T_COMMON)
-                        signals[name] = F.interpolate(
-                            gen, size=NATIVE_LENS[name],
-                            mode='linear', align_corners=False,
-                        )
+                        if USE_TCOMMON:
+                            signals[name] = gen
+                        else:
+                            signals[name] = F.interpolate(
+                                gen, size=NATIVE_LENS[name],
+                                mode='linear', align_corners=False,
+                            )
 
                 else:  # mean
                     for name in missing_sensors:
                         signals[name] = mean_signals[name].expand(B, -1, -1)
+                        if USE_TCOMMON:
+                            signals[name] = F.interpolate(
+                                signals[name], size=T_COMMON,
+                                mode='linear', align_corners=False,
+                            )
 
                 logits = classifier(signals, SENSOR_NAMES)
                 probs  = F.softmax(logits, dim=1)
