@@ -22,6 +22,8 @@ T_COMMON = 256   # all sensors interpolated to this for cross-attention
 # ============================================================
 # Building blocks (reused from V3)
 # ============================================================
+# This function converts the diffusion timestep t into vector representation. Instead of passing
+# t as 250, we convert it to vector using sine and cosine waves.
 class SinusoidalTimeEmbedding(nn.Module):
     def __init__(self, dim):
         super().__init__()
