@@ -1,18 +1,22 @@
 # ============================================================
-# Train Cross-Sensor Signal Diffusion + Reconstruction Loss
+# Train Cross-Sensor Signal Diffusion on the Opportunity dataset
 #
-# Same as train_signal_cross_diffusion but with additional losses:
-#   x0_pred = (x_t - sqrt(1-ab)*eps_pred) / sqrt(ab)  [differentiable]
-#   recon_loss = MSE(x0_pred, x_original)              [in signal space]
-#   fft_loss   = MSE(|FFT(x0_pred)|, |FFT(x_original)|)
+# Same model & objective as the CogAge cross-sensor diffusion
+# (src/models/signal_cross_diffusion.py), but on the 14 triaxial
+# body-IMU sensors extracted from Opportunity.
 #
-# Total: noise_loss + LAMBDA_RECON * recon_loss + LAMBDA_FFT * fft_loss
+# Objective (per masked/missing sensor):
+#   x0_pred    = (x_t - sqrt(1-ab)*eps_pred) / sqrt(ab)
+#   noise_loss = MSE(eps_pred, eps)
+#   recon_loss = MSE(x0_pred, x0)          [normalized signal space]
+#   fft_loss   = MSE(|FFT(x0_pred)|, |FFT(x0)|)
+#   total      = noise_loss + L_RECON*recon_loss + L_FFT*fft_loss
 #
-# No VAE needed — x0_pred is directly the signal.
-# New checkpoint: checkpoints/signal_cross_diffusion_recon/
+# Prereq: run the preprocessing first to create the .npy arrays:
+#   python -m src.data.opportunity.preprocess_opportunity
 #
-# Usage:
-#   python -m src.train.train_signal_cross_diffusion_recon
+# Usage (from repo root):
+#   python -m src.train.trainingonopportunitydataset.train_signal_cross_diffusion_opportunity
 # ============================================================
 
 import math
@@ -20,17 +24,18 @@ import random
 from pathlib import Path
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, ConcatDataset
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.models.signal_cross_diffusion import (
     create_signal_cross_diffusion, T_COMMON,
 )
-from src.models.sensor_vae import SENSOR_NAMES
-from src.data.cogage_labeled_dataset import (
-    get_combined_labeled_dataset, CogAgeLabeledDataset,
-)
-from src.data.sensor_normalizer import SensorNormalizer
+from src.data.opportunity.opportunity_sensor_dataset import OpportunitySensorDataset
+from src.data.opportunity.opportunity_constants import OPP_SENSOR_NAMES, OPP_DEVICE_GROUPS
+
+# Local aliases so the training body reads like the CogAge script
+SENSOR_NAMES  = OPP_SENSOR_NAMES
+DEVICE_GROUPS = OPP_DEVICE_GROUPS
 
 
 # ============================================================
@@ -38,14 +43,9 @@ from src.data.sensor_normalizer import SensorNormalizer
 # ============================================================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
-COGAGE_ROOTS = {
-    "blho":  "data/cogage/python/arrays/blho",
-    "bbh":   "data/cogage/python/arrays/bbh",
-    "state": "data/cogage/python/arrays/state",
-}
+OPP_ROOT = "data/opportunity/arrays"
 
-OUT_DIR = Path("checkpoints/signal_cross_diffusion_recon_v3")
+OUT_DIR = Path("checkpoints/opportunity_signal_cross_diffusion")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 T          = 1000
@@ -61,19 +61,12 @@ DROPOUT    = 0.1
 
 NUM_WORKERS = 4
 
-# Device groups for realistic missing patterns
-DEVICE_GROUPS = {
-    "phone":   ["phone_acc", "phone_gyro", "phone_grav", "phone_lacc"],
-    "watch":   ["watch_acc", "watch_gyro"],
-    "glasses": ["glasses_acc"],
-}
-# Sampling probabilities:
-# 0.35 → full device missing
-# 0.25 → single sensor missing
-# 0.40 → random 2-3 sensors missing
-P_DEVICE  = 0.35
-P_SINGLE  = 0.40
-# rest = random 2-3
+# Missing-pattern sampling probabilities:
+#   P_DEVICE -> drop a whole body location (e.g. both shoes)
+#   P_SINGLE -> drop a single sensor
+#   rest     -> drop a random 2-3 sensors
+P_DEVICE = 0.35
+P_SINGLE = 0.40
 
 LAMBDA_RECON = 1.0
 LAMBDA_FFT   = 0.001
@@ -97,14 +90,11 @@ def sample_missing_idx():
     """Returns list of sensor indices to mask."""
     p = random.random()
     if p < P_DEVICE:
-        # Full device missing
-        device = random.choice(list(DEVICE_GROUPS.keys()))
+        device  = random.choice(list(DEVICE_GROUPS.keys()))
         missing = DEVICE_GROUPS[device]
     elif p < P_DEVICE + P_SINGLE:
-        # Single random sensor
         missing = [random.choice(SENSOR_NAMES)]
     else:
-        # Random 2-3 sensors
         missing = random.sample(SENSOR_NAMES, random.randint(2, 3))
     return [SENSOR_NAMES.index(s) for s in missing]
 
@@ -113,30 +103,27 @@ def sample_missing_idx():
 # FFT loss
 # ============================================================
 def fft_loss(pred, target):
-    """pred, target: (B, C, T) — compares magnitude spectra along T"""
+    """pred, target: (B, C, T) — compares magnitude spectra along T."""
     pred_mag   = torch.fft.rfft(pred,   dim=-1).abs()
     target_mag = torch.fft.rfft(target, dim=-1).abs()
     return F.mse_loss(pred_mag, target_mag)
 
 
 # ============================================================
-# Signal preparation
+# Signal preparation: stack all sensors, interpolate to T_COMMON
 # ============================================================
 def stack_signals(batch, device):
-    """Returns: (B, K, C, T_COMMON)"""
+    """Returns: (B, K, C, T_COMMON)."""
     parts = []
     for name in SENSOR_NAMES:
-        x = batch[name].to(device)
-        x = x.permute(0, 2, 1).float()
-        x = F.interpolate(x, size=T_COMMON, mode='linear', align_corners=False)
+        x = batch[name].to(device).permute(0, 2, 1).float()   # (B, C, T)
+        x = F.interpolate(x, size=T_COMMON, mode="linear", align_corners=False)
         parts.append(x)
     return torch.stack(parts, dim=1)
 
-    # This function is used to make the sensor data have same common time length (T_common) for the diffusion model.
-
 
 # ============================================================
-# Normalization stats
+# Normalization stats (per-sensor, per-channel z-score)
 # ============================================================
 def compute_norm_stats(train_loader, device):
     print("Computing normalization stats...")
@@ -159,29 +146,59 @@ def compute_norm_stats(train_loader, device):
 
 
 # ============================================================
+# One forward pass of the diffusion objective (shared train/eval)
+# ============================================================
+def diffusion_step(model, stacked, norm_mean, norm_std, alpha_bar):
+    stacked_norm = (stacked - norm_mean[None, :, :, None]) \
+                 / norm_std[None, :, :, None]
+    B = stacked.shape[0]
+
+    missing_idx   = sample_missing_idx()
+    observed_mask = torch.ones(B, len(SENSOR_NAMES), device=stacked.device)
+    for i in missing_idx:
+        observed_mask[:, i] = 0.0
+
+    t_step = torch.randint(0, T, (B,), device=stacked.device)
+    noise  = torch.randn_like(stacked_norm)
+    ab3    = alpha_bar[t_step][:, None, None]
+
+    noisy = stacked_norm.clone()
+    for i in missing_idx:
+        noisy[:, i] = (torch.sqrt(ab3) * stacked_norm[:, i]
+                       + torch.sqrt(1 - ab3) * noise[:, i])
+
+    noise_pred = model(noisy, t_step, observed_mask)
+
+    noise_loss = sum(
+        F.mse_loss(noise_pred[:, i], noise[:, i]) for i in missing_idx
+    ) / len(missing_idx)
+
+    recon_loss = torch.tensor(0.0, device=stacked.device)
+    freq_loss  = torch.tensor(0.0, device=stacked.device)
+    for i in missing_idx:
+        x0_pred = ((noisy[:, i] - torch.sqrt(1 - ab3) * noise_pred[:, i])
+                   / torch.sqrt(ab3)).clamp(-5, 5)
+        recon_loss = recon_loss + F.mse_loss(x0_pred, stacked_norm[:, i])
+        freq_loss  = freq_loss  + fft_loss(x0_pred, stacked_norm[:, i])
+    recon_loss = recon_loss / len(missing_idx)
+    freq_loss  = freq_loss  / len(missing_idx)
+
+    return noise_loss, recon_loss, freq_loss
+
+
+# ============================================================
 # MAIN
 # ============================================================
 def main():
     print(f"\n{'='*65}")
-    print(f"Training Signal Cross-Sensor Diffusion + Recon Loss")
-    print(f"T={T}, T_COMMON={T_COMMON}, Epochs={EPOCHS}")
+    print(f"Training Opportunity Cross-Sensor Signal Diffusion")
+    print(f"K_sensors={len(SENSOR_NAMES)}, T={T}, T_COMMON={T_COMMON}, Epochs={EPOCHS}")
     print(f"lambda_recon={LAMBDA_RECON}, lambda_fft={LAMBDA_FFT}")
     print(f"D_model={D_MODEL}, Blocks={NUM_BLOCKS}, Heads={NUM_HEADS}")
     print(f"{'='*65}\n")
 
-    normalizer = SensorNormalizer.load(NORMALIZER_PATH)
-
-    behavioral_train = get_combined_labeled_dataset(
-        {"blho": COGAGE_ROOTS["blho"], "bbh": COGAGE_ROOTS["bbh"]}, "training", normalizer,
-    )
-    behavioral_test = get_combined_labeled_dataset(
-        {"blho": COGAGE_ROOTS["blho"], "bbh": COGAGE_ROOTS["bbh"]}, "testing", normalizer,
-    )
-    state_train = CogAgeLabeledDataset(COGAGE_ROOTS["state"], "training", normalizer)
-    state_test  = CogAgeLabeledDataset(COGAGE_ROOTS["state"], "testing",  normalizer)
-
-    train_ds = ConcatDataset([behavioral_train, state_train])
-    test_ds  = ConcatDataset([behavioral_test,  state_test])
+    train_ds = OpportunitySensorDataset(OPP_ROOT, "training")
+    test_ds  = OpportunitySensorDataset(OPP_ROOT, "testing")
     print(f"Train: {len(train_ds)}, Test: {len(test_ds)}")
 
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,
@@ -200,8 +217,8 @@ def main():
     )
 
     # Noise schedule
-    betas     = cosine_beta_schedule(T)             # If this is a noise amount
-    alpha_bar = torch.cumprod(1.0 - betas, dim=0).to(DEVICE)    # How much the original signal is kept
+    betas     = cosine_beta_schedule(T)
+    alpha_bar = torch.cumprod(1.0 - betas, dim=0).to(DEVICE)
 
     # Model
     print(f"\nCreating Signal Cross-Sensor Diffusion...")
@@ -212,7 +229,7 @@ def main():
         num_heads=NUM_HEADS,
         num_blocks=NUM_BLOCKS,
         dropout=DROPOUT,
-    ).to(DEVICE) # Step from 209-215 creates a neural network model
+    ).to(DEVICE)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"  Parameters: {n_params / 1e6:.2f}M")
 
@@ -227,44 +244,9 @@ def main():
         n_batches = 0
 
         for batch in tqdm(train_loader, desc=f"[Train] {epoch}/{EPOCHS}", leave=False):
-            stacked = stack_signals(batch, DEVICE)   # (B, K, C, T_COMMON)
-            B, K, C, T_len = stacked.shape
-
-            stacked_norm = (stacked - norm_mean[None, :, :, None]) \
-                         / norm_std[None, :, :, None]
-
-            missing_idx   = sample_missing_idx()
-            observed_mask = torch.ones(B, K, device=DEVICE)
-            for i in missing_idx:
-                observed_mask[:, i] = 0.0
-
-            t_step = torch.randint(0, T, (B,), device=DEVICE)
-            noise  = torch.randn_like(stacked_norm)
-            ab3    = alpha_bar[t_step][:, None, None]   # (B, 1, 1)
-
-            noisy = stacked_norm.clone()
-            for i in missing_idx:
-                noisy[:, i] = (torch.sqrt(ab3) * stacked_norm[:, i]
-                               + torch.sqrt(1 - ab3) * noise[:, i])
-
-            noise_pred = model(noisy, t_step, observed_mask)  # (B, K, C, T)
-
-            # 1) Noise prediction loss
-            noise_loss = sum(
-                F.mse_loss(noise_pred[:, i], noise[:, i])
-                for i in missing_idx
-            ) / len(missing_idx)
-
-            # 2) Reconstruction loss: recover x0 in normalized signal space
-            recon_loss = torch.tensor(0.0, device=DEVICE)
-            freq_loss  = torch.tensor(0.0, device=DEVICE)
-            for i in missing_idx:
-                x0_pred = ((noisy[:, i] - torch.sqrt(1 - ab3) * noise_pred[:, i])
-                           / torch.sqrt(ab3)).clamp(-5, 5)   # (B, C, T_COMMON)
-                recon_loss = recon_loss + F.mse_loss(x0_pred, stacked_norm[:, i])
-                freq_loss  = freq_loss  + fft_loss(x0_pred, stacked_norm[:, i])
-            recon_loss = recon_loss / len(missing_idx)
-            freq_loss  = freq_loss  / len(missing_idx)
+            stacked = stack_signals(batch, DEVICE)
+            noise_loss, recon_loss, freq_loss = diffusion_step(
+                model, stacked, norm_mean, norm_std, alpha_bar)
 
             loss = noise_loss + LAMBDA_RECON * recon_loss + LAMBDA_FFT * freq_loss
 
@@ -287,45 +269,11 @@ def main():
         model.eval()
         eval_noise = eval_recon = eval_fft = 0.0
         n_eval = 0
-
         with torch.no_grad():
             for batch in tqdm(test_loader, desc=f"[Eval ] {epoch}/{EPOCHS}", leave=False):
                 stacked = stack_signals(batch, DEVICE)
-                stacked_norm = (stacked - norm_mean[None, :, :, None]) \
-                             / norm_std[None, :, :, None]
-                B = stacked.shape[0]
-
-                missing_idx   = sample_missing_idx()
-                observed_mask = torch.ones(B, len(SENSOR_NAMES), device=DEVICE)
-                for i in missing_idx:
-                    observed_mask[:, i] = 0.0
-
-                t_step = torch.randint(0, T, (B,), device=DEVICE)
-                noise  = torch.randn_like(stacked_norm)
-                ab3    = alpha_bar[t_step][:, None, None]
-
-                noisy = stacked_norm.clone()
-                for i in missing_idx:
-                    noisy[:, i] = (torch.sqrt(ab3) * stacked_norm[:, i]
-                                   + torch.sqrt(1 - ab3) * noise[:, i])
-
-                noise_pred = model(noisy, t_step, observed_mask)
-
-                noise_loss = sum(
-                    F.mse_loss(noise_pred[:, i], noise[:, i])
-                    for i in missing_idx
-                ) / len(missing_idx)
-
-                recon_loss = torch.tensor(0.0, device=DEVICE)
-                freq_loss  = torch.tensor(0.0, device=DEVICE)
-                for i in missing_idx:
-                    x0_pred = ((noisy[:, i] - torch.sqrt(1 - ab3) * noise_pred[:, i])
-                               / torch.sqrt(ab3)).clamp(-5, 5)
-                    recon_loss = recon_loss + F.mse_loss(x0_pred, stacked_norm[:, i])
-                    freq_loss  = freq_loss  + fft_loss(x0_pred, stacked_norm[:, i])
-                recon_loss = recon_loss / len(missing_idx)
-                freq_loss  = freq_loss  / len(missing_idx)
-
+                noise_loss, recon_loss, freq_loss = diffusion_step(
+                    model, stacked, norm_mean, norm_std, alpha_bar)
                 eval_noise += noise_loss.item()
                 eval_recon += recon_loss.item()
                 eval_fft   += freq_loss.item()
@@ -352,6 +300,7 @@ def main():
             "fft_loss":    eval_fft,
             "T":           T,
             "schedule":    SCHEDULE,
+            "sensor_names": SENSOR_NAMES,
             "config": {
                 "n_sensors":    len(SENSOR_NAMES),
                 "in_channels":  3,

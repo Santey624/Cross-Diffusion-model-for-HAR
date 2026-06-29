@@ -26,11 +26,10 @@ from tqdm import tqdm
 from src.models.signal_cross_diffusion import (
     create_signal_cross_diffusion, T_COMMON,
 )
-from src.models.sensor_vae import SENSOR_NAMES
-from src.data.cogage_labeled_dataset import (
-    get_combined_labeled_dataset, CogAgeLabeledDataset,
+from src.data.cogage.cogage_labeled_dataset import (
+    SENSOR_NAMES, get_combined_labeled_dataset, CogAgeLabeledDataset,
 )
-from src.data.sensor_normalizer import SensorNormalizer
+from src.data.transforms.sensor_normalizer import SensorNormalizer
 
 
 # ============================================================
@@ -38,7 +37,7 @@ from src.data.sensor_normalizer import SensorNormalizer
 # ============================================================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-NORMALIZER_PATH = "data/sensor_normalizer_combined.npz"
+NORMALIZER_PATH = "data/combined_normalizer.npz"
 COGAGE_ROOTS = {
     "blho":  "data/cogage/python/arrays/blho",
     "bbh":   "data/cogage/python/arrays/bbh",

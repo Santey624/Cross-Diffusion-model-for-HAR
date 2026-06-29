@@ -19,7 +19,7 @@ from tqdm import tqdm
 from src.models.sensor_vae import SensorMultiModalVAE, SENSOR_NAMES
 from src.models.clstm_classifier import create_clstm_classifier
 from src.data.cogage_labeled_dataset import get_combined_labeled_dataset
-from src.data.sensor_normalizer import SensorNormalizer
+from src.data.transforms.sensor_normalizer import SensorNormalizer
 
 
 # ============================================================

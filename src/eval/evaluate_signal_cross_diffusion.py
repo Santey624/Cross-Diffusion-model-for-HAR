@@ -33,7 +33,7 @@ from src.models.sensor_vae import SENSOR_NAMES, SENSOR_SPECS
 from src.data.cogage_labeled_dataset import (
     get_combined_labeled_dataset, CogAgeLabeledDataset,
 )
-from src.data.sensor_normalizer import SensorNormalizer
+from src.data.transforms.sensor_normalizer import SensorNormalizer
 
 
 # ============================================================
