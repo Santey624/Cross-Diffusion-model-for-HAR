@@ -1,0 +1,62 @@
+nohup: ignoring input
+============================================================
+Opportunity CLSTM train + evaluate for all label tracks
+Started: 2026-07-13T04:06:21+00:00
+============================================================
+[skip train] locomotion already has checkpoints/clstm_raw_opportunity_locomotion/best_model.pt
+
+===== Evaluating track: locomotion =====
+Started: 2026-07-13T04:06:21+00:00
+Finished eval: 2026-07-13T07:43:27+00:00  -> eval_outputs/opportunity/locomotion_metrics.csv
+
+===== Training track: hl_activity =====
+Started: 2026-07-13T07:43:27+00:00
+Finished train: 2026-07-13T09:06:17+00:00  -> checkpoints/clstm_raw_opportunity_hl_activity/best_model.pt
+
+===== Evaluating track: hl_activity =====
+Started: 2026-07-13T09:06:17+00:00
+Finished eval: 2026-07-13T12:43:22+00:00  -> eval_outputs/opportunity/hl_activity_metrics.csv
+
+===== Training track: ll_left_arm =====
+Started: 2026-07-13T12:43:22+00:00
+Finished train: 2026-07-13T14:04:38+00:00  -> checkpoints/clstm_raw_opportunity_ll_left_arm/best_model.pt
+
+===== Evaluating track: ll_left_arm =====
+Started: 2026-07-13T14:04:38+00:00
+Finished eval: 2026-07-13T17:41:38+00:00  -> eval_outputs/opportunity/ll_left_arm_metrics.csv
+
+===== Training track: ll_left_arm_object =====
+Started: 2026-07-13T17:41:38+00:00
+Finished train: 2026-07-13T19:04:40+00:00  -> checkpoints/clstm_raw_opportunity_ll_left_arm_object/best_model.pt
+
+===== Evaluating track: ll_left_arm_object =====
+Started: 2026-07-13T19:04:40+00:00
+Finished eval: 2026-07-13T22:41:45+00:00  -> eval_outputs/opportunity/ll_left_arm_object_metrics.csv
+
+===== Training track: ll_right_arm =====
+Started: 2026-07-13T22:41:45+00:00
+Finished train: 2026-07-14T00:03:59+00:00  -> checkpoints/clstm_raw_opportunity_ll_right_arm/best_model.pt
+
+===== Evaluating track: ll_right_arm =====
+Started: 2026-07-14T00:03:59+00:00
+Finished eval: 2026-07-14T03:41:02+00:00  -> eval_outputs/opportunity/ll_right_arm_metrics.csv
+
+===== Training track: ll_right_arm_object =====
+Started: 2026-07-14T03:41:02+00:00
+Finished train: 2026-07-14T05:02:34+00:00  -> checkpoints/clstm_raw_opportunity_ll_right_arm_object/best_model.pt
+
+===== Evaluating track: ll_right_arm_object =====
+Started: 2026-07-14T05:02:34+00:00
+Finished eval: 2026-07-14T08:39:42+00:00  -> eval_outputs/opportunity/ll_right_arm_object_metrics.csv
+
+===== Training track: ml_both_arms =====
+Started: 2026-07-14T08:39:42+00:00
+Finished train: 2026-07-14T10:01:55+00:00  -> checkpoints/clstm_raw_opportunity_ml_both_arms/best_model.pt
+
+===== Evaluating track: ml_both_arms =====
+Started: 2026-07-14T10:01:55+00:00
+Finished eval: 2026-07-14T13:39:04+00:00  -> eval_outputs/opportunity/ml_both_arms_metrics.csv
+
+============================================================
+All tracks train+eval finished: 2026-07-14T13:39:04+00:00
+============================================================

@@ -1,0 +1,37 @@
+nohup: ignoring input
+============================================================
+Opportunity CLSTM augment-cross train for all label tracks
+Started: 2026-07-27T03:27:00+00:00
+============================================================
+
+===== Training track: locomotion (augment_cross) =====
+Started: 2026-07-27T03:27:00+00:00
+Finished train: 2026-07-27T09:42:01+00:00  -> checkpoints/clstm_raw_opportunity_locomotion_augment_cross/best_model.pt
+
+===== Training track: hl_activity (augment_cross) =====
+Started: 2026-07-27T09:42:01+00:00
+Finished train: 2026-07-27T15:58:31+00:00  -> checkpoints/clstm_raw_opportunity_hl_activity_augment_cross/best_model.pt
+
+===== Training track: ll_left_arm (augment_cross) =====
+Started: 2026-07-27T15:58:31+00:00
+Finished train: 2026-07-27T22:13:40+00:00  -> checkpoints/clstm_raw_opportunity_ll_left_arm_augment_cross/best_model.pt
+
+===== Training track: ll_left_arm_object (augment_cross) =====
+Started: 2026-07-27T22:13:40+00:00
+Finished train: 2026-07-28T04:27:14+00:00  -> checkpoints/clstm_raw_opportunity_ll_left_arm_object_augment_cross/best_model.pt
+
+===== Training track: ll_right_arm (augment_cross) =====
+Started: 2026-07-28T04:27:14+00:00
+Finished train: 2026-07-28T10:44:47+00:00  -> checkpoints/clstm_raw_opportunity_ll_right_arm_augment_cross/best_model.pt
+
+===== Training track: ll_right_arm_object (augment_cross) =====
+Started: 2026-07-28T10:44:47+00:00
+Finished train: 2026-07-28T17:00:44+00:00  -> checkpoints/clstm_raw_opportunity_ll_right_arm_object_augment_cross/best_model.pt
+
+===== Training track: ml_both_arms (augment_cross) =====
+Started: 2026-07-28T17:00:44+00:00
+Finished train: 2026-07-28T23:16:03+00:00  -> checkpoints/clstm_raw_opportunity_ml_both_arms_augment_cross/best_model.pt
+
+============================================================
+All augment-cross trains finished: 2026-07-28T23:16:03+00:00
+============================================================

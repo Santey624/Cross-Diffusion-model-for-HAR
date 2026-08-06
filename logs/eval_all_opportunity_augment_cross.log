@@ -1,0 +1,37 @@
+nohup: ignoring input
+============================================================
+Opportunity CrossDiff eval (augment-cross classifier) — all tracks
+Started: 2026-07-28T23:29:23+00:00
+============================================================
+
+===== Evaluating track: locomotion (augment_cross) =====
+Started: 2026-07-28T23:29:23+00:00
+Finished eval: 2026-07-29T03:06:42+00:00  -> eval_outputs/opportunity/locomotion_augment_cross_metrics.csv
+
+===== Evaluating track: hl_activity (augment_cross) =====
+Started: 2026-07-29T03:06:42+00:00
+Finished eval: 2026-07-29T06:43:59+00:00  -> eval_outputs/opportunity/hl_activity_augment_cross_metrics.csv
+
+===== Evaluating track: ll_left_arm (augment_cross) =====
+Started: 2026-07-29T06:43:59+00:00
+Finished eval: 2026-07-29T10:21:17+00:00  -> eval_outputs/opportunity/ll_left_arm_augment_cross_metrics.csv
+
+===== Evaluating track: ll_left_arm_object (augment_cross) =====
+Started: 2026-07-29T10:21:17+00:00
+Finished eval: 2026-07-29T13:58:35+00:00  -> eval_outputs/opportunity/ll_left_arm_object_augment_cross_metrics.csv
+
+===== Evaluating track: ll_right_arm (augment_cross) =====
+Started: 2026-07-29T13:58:35+00:00
+Finished eval: 2026-07-29T17:35:50+00:00  -> eval_outputs/opportunity/ll_right_arm_augment_cross_metrics.csv
+
+===== Evaluating track: ll_right_arm_object (augment_cross) =====
+Started: 2026-07-29T17:35:50+00:00
+Finished eval: 2026-07-29T21:13:02+00:00  -> eval_outputs/opportunity/ll_right_arm_object_augment_cross_metrics.csv
+
+===== Evaluating track: ml_both_arms (augment_cross) =====
+Started: 2026-07-29T21:13:02+00:00
+Finished eval: 2026-07-30T00:50:17+00:00  -> eval_outputs/opportunity/ml_both_arms_augment_cross_metrics.csv
+
+============================================================
+All augment-cross evals finished: 2026-07-30T00:50:17+00:00
+============================================================
